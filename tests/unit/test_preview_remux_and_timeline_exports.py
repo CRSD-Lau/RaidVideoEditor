@@ -1,0 +1,227 @@
+from __future__ import annotations
+
+import json
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import pytest
+
+import raid_editor.audio.tracks as audio_tracks
+from raid_editor.audio.tracks import AudioMappingError, create_mic_free_remux
+from raid_editor.ingestion.probe import AudioStream, MediaProbe
+from raid_editor.models import TimelineClip, TimelineDocument
+from raid_editor.rendering.preview import build_filter_graph, build_preview_command
+from raid_editor.timeline.export import (
+    write_chapters,
+    write_fcpxml,
+    write_labels_srt,
+    write_timeline_json,
+)
+from raid_editor.util.paths import quick_file_fingerprint
+
+
+def _timeline(source: Path) -> TimelineDocument:
+    return TimelineDocument(
+        timeline_name="Deterministic Condensed Review",
+        source=source,
+        source_duration_seconds=30.0,
+        source_fps=30.0,
+        retained_audio_stream_indexes=[2, 3],
+        excluded_microphone_stream_index=4,
+        clips=[
+            TimelineClip(
+                source_in=1.0,
+                source_out=4.0,
+                timeline_in=0.0,
+                label="Trash pull",
+                type="trash_pull",
+                result="unknown",
+                transition_out="fade",
+                pull_ids=["trash-1"],
+            ),
+            TimelineClip(
+                source_in=10.0,
+                source_out=12.0,
+                timeline_in=3.0,
+                label="Boss — Wipe",
+                type="boss_wipe",
+                result="wipe",
+                transition_in="fade",
+                pull_ids=["boss-1"],
+            ),
+        ],
+    )
+
+
+def _verified_sidecar_probe() -> MediaProbe:
+    return MediaProbe(
+        source={"path": "sidecar.mov"},
+        format_name="mov",
+        duration_seconds=30.0,
+        size_bytes=128,
+        video_streams=[],
+        audio_streams=[
+            AudioStream(index=1, audio_ordinal=0, codec="aac"),
+            AudioStream(index=2, audio_ordinal=1, codec="aac"),
+        ],
+    )
+
+
+def test_preview_filter_graph_includes_only_retained_audio_streams(tmp_path: Path) -> None:
+    # Arrange
+    timeline = _timeline(tmp_path / "source.mkv")
+
+    # Act
+    graph = build_filter_graph(
+        timeline,
+        width=1280,
+        height=720,
+        fps=30,
+        transition_seconds=0.2,
+        music=None,
+    )
+
+    # Assert
+    assert graph.count("[0:2]atrim=") == len(timeline.clips)
+    assert graph.count("[0:3]atrim=") == len(timeline.clips)
+    assert "[0:4]" not in graph
+    assert "amix=inputs=2" in graph
+
+
+def test_preview_command_maps_only_filtered_review_outputs(tmp_path: Path) -> None:
+    # Arrange
+    timeline = _timeline(tmp_path / "source recording.mkv")
+    filter_script = tmp_path / "review.filters.txt"
+    destination = tmp_path / "review copy.mp4"
+
+    # Act
+    command = build_preview_command(
+        timeline,
+        filter_script,
+        destination,
+        bitrate="1M",
+        music=None,
+    )
+
+    # Assert
+    mapped_values = [
+        command[index + 1] for index, argument in enumerate(command[:-1]) if argument == "-map"
+    ]
+    assert mapped_values == ["[vout]", "[aout]"]
+    assert command.count("-i") == 1
+    assert str(timeline.source) in command
+    assert str(destination) == command[-1]
+    assert "Review render only" in " ".join(command)
+
+
+def test_mic_free_remux_maps_retained_streams_and_never_changes_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    source = tmp_path / "source raid.mkv"
+    source.write_bytes(b"immutable source recording")
+    destination = tmp_path / "generated" / "source-microphone-free.mov"
+    before = quick_file_fingerprint(source, chunk_bytes=8)
+    observed: dict[str, list[str]] = {}
+
+    def fake_ffmpeg(command: list[str]) -> None:
+        observed["command"] = command
+        Path(command[-1]).write_bytes(b"verified sidecar")
+
+    monkeypatch.setattr(audio_tracks, "_run_ffmpeg", fake_ffmpeg)
+    monkeypatch.setattr(audio_tracks, "probe_media", lambda _: _verified_sidecar_probe())
+
+    # Act
+    result = create_mic_free_remux(
+        source,
+        retained_stream_indexes=[2, 3],
+        microphone_stream_index=4,
+        destination=destination,
+    )
+
+    # Assert
+    command = observed["command"]
+    mapped_values = [
+        command[index + 1] for index, argument in enumerate(command[:-1]) if argument == "-map"
+    ]
+    assert result == destination
+    assert mapped_values == ["0:v:0", "0:2", "0:3"]
+    assert "0:4" not in command
+    assert command[command.index("-c") + 1] == "copy"
+    assert quick_file_fingerprint(source, chunk_bytes=8) == before
+    assert destination.with_suffix(".mov.json").is_file()
+
+
+@pytest.mark.parametrize(
+    ("retained", "microphone", "message"),
+    [
+        ([], 4, "without retained audio tracks"),
+        ([2, 4], 4, "Refusing to retain the configured microphone stream"),
+    ],
+)
+def test_mic_free_remux_rejects_unsafe_mapping_before_running_ffmpeg(
+    retained: list[int],
+    microphone: int,
+    message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    source = tmp_path / "source.mkv"
+    source.write_bytes(b"immutable")
+    destination = tmp_path / "sidecar.mov"
+
+    def unexpected_ffmpeg(_: list[str]) -> None:
+        raise AssertionError("FFmpeg must not run for an unsafe mapping")
+
+    monkeypatch.setattr(audio_tracks, "_run_ffmpeg", unexpected_ffmpeg)
+
+    # Act / Assert
+    with pytest.raises(AudioMappingError, match=message):
+        create_mic_free_remux(
+            source,
+            retained_stream_indexes=retained,
+            microphone_stream_index=microphone,
+            destination=destination,
+        )
+    assert source.read_bytes() == b"immutable"
+    assert not destination.exists()
+
+
+def test_timeline_exports_preserve_clip_timing_and_use_the_mic_free_asset(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    source = tmp_path / "source.mkv"
+    sidecar = tmp_path / "source-microphone-free.mov"
+    timeline = _timeline(source)
+    timeline_json = tmp_path / "timeline.json"
+    fcpxml = tmp_path / "timeline.fcpxml"
+    labels = tmp_path / "pull-labels.srt"
+    chapters = tmp_path / "chapters.txt"
+
+    # Act
+    write_timeline_json(timeline, timeline_json)
+    write_fcpxml(timeline, fcpxml, media_path=sidecar, width=1920, height=1080)
+    write_labels_srt(timeline, labels)
+    write_chapters(timeline, chapters)
+
+    # Assert
+    payload = json.loads(timeline_json.read_text(encoding="utf-8"))
+    root = ET.parse(fcpxml).getroot()  # noqa: S314 - generated locally by the test
+    asset = root.find("./resources/asset")
+    clips = root.findall("./library/event/project/sequence/spine/asset-clip")
+    assert payload["condensed_duration_seconds"] == 5.0
+    assert payload["retained_audio_stream_indexes"] == [2, 3]
+    assert payload["excluded_microphone_stream_index"] == 4
+    assert asset is not None
+    assert asset.attrib["src"] == sidecar.resolve().as_uri()
+    assert asset.attrib["hasAudio"] == "1"
+    assert [clip.attrib["start"] for clip in clips] == ["30/30s", "300/30s"]
+    assert [clip.attrib["offset"] for clip in clips] == ["0/30s", "90/30s"]
+    assert "00:00:00,000 --> 00:00:03,000\nTrash pull" in labels.read_text(encoding="utf-8")
+    assert chapters.read_text(encoding="utf-8").splitlines() == [
+        "00:00 Trash pull",
+        "00:03 Boss — Wipe",
+    ]

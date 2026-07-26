@@ -1,0 +1,304 @@
+# WoW Raid Video Editor
+
+WoW Raid Video Editor is a local, review-first Python 3.12 CLI for condensing one
+long OBS raid recording into pull-focused review media. It inspects the recording
+with FFprobe, keeps explicitly selected game and Discord audio, excludes a
+separately recorded microphone stream, derives pull candidates from local raid
+evidence, exports a neutral timeline and FCPXML, and renders a low-resolution
+preview with FFmpeg.
+
+The MVP does **not** modify source media, create a final-quality render, upload a
+video, or publish anything. Human review is required before timeline generation
+and again before any later manual finishing work in an editor.
+
+## Current workstation status
+
+The following facts were checked on the development workstation on 2026-07-26:
+
+- OBS Studio 32.1.2 records MOV with HEVC and all six recording tracks enabled.
+  However, both `Desktop Audio` and `Mic/Aux` are currently routed to every
+  track. The six tracks therefore do not provide a microphone-free program
+  track. Future recordings must route the microphone to a separate track; this
+  software cannot remove speech already baked into every track. Treat the
+  current long recording as detection/review evidence only; do not mislabel a
+  mixed track as microphone-free to force timeline creation.
+- The audited 2026-07-24 MOV is 900x1600 portrait at 60 fps even though the
+  active OBS profile now reports a 1920x1080 output. The preview renderer fits
+  without cropping and pads to 1280x720; it does not make creative reframing
+  decisions.
+- The legacy WoW 3.3.5 combat log is
+  `D:\world of warcraft 3.3.5a hd\Logs\WoWCombatLog.txt`. It is an accumulated
+  file of about 300 MB. The parser streams it and selects the recording-time
+  window instead of loading the whole file into memory.
+- DaVinci Resolve 20.3.2 is installed as the apparent non-Studio edition. Its
+  installed API documentation identifies the scripting API as a Resolve Studio
+  feature. The installed shim works only through Python 3.13 on this host.
+  Live API project creation/import has **not** been proven.
+- The deterministic Resolve fallback is
+  `timeline\timeline.fcpxml` plus
+  `generated-assets\source-microphone-free.mov`. A manual import of the
+  synthetic three-pull fixture succeeded in a new Resolve 20.3.2 project on
+  2026-07-26.
+
+See [OBS recording setup](docs/obs-recording-setup.md) before recording another
+raid and [Resolve setup](docs/resolve-setup.md) before attempting an import.
+
+## Requirements
+
+- Windows 10 or 11
+- Python 3.12 x64 for the main application
+- [uv](https://docs.astral.sh/uv/)
+- `ffmpeg` and `ffprobe` on `PATH`
+- Optional Resolve API attempt: Python 3.13 x64 and Resolve Studio with local
+  external scripting enabled
+
+Install any missing main-runtime prerequisites with Windows Package Manager:
+
+```powershell
+winget install --id Python.Python.3.12 --exact
+winget install --id astral-sh.uv --exact
+winget install --id Gyan.FFmpeg --exact
+```
+
+Open a new PowerShell session after installation so `PATH` changes are visible.
+Do not install or upgrade Resolve merely to run the CLI; FCPXML is the supported
+fallback.
+
+From PowerShell:
+
+```powershell
+Set-Location C:\Projects\RaidVideoEditor
+py -3.12 --version
+uv --version
+ffmpeg -version
+ffprobe -version
+uv sync --python 3.12 --extra dev --frozen
+uv run python --version
+uv run raid-editor --help
+```
+
+`uv run python --version` should report Python 3.12. The Resolve bridge uses
+`py -3.13` separately and does not change the main environment.
+
+## First run with the synthetic fixture
+
+The included fixture is safe for learning the workflow:
+
+```powershell
+uv run python scripts\generate-synthetic-fixture.py --force
+uv run raid-editor inspect samples\synthetic-project.yaml --open-review
+uv run raid-editor analyse samples\synthetic-project.yaml
+uv run raid-editor review samples\synthetic-project.yaml
+```
+
+Inspect the audio samples and pull review. Only after accepting the stream map
+and pull boundaries:
+
+```powershell
+uv run raid-editor build-timeline samples\synthetic-project.yaml
+uv run raid-editor render-preview samples\synthetic-project.yaml
+uv run raid-editor validate samples\synthetic-project.yaml
+```
+
+Generated fixture output is written beneath
+`output\synthetic-pizza-warriors-raid\`.
+
+## Start a real project
+
+The guided path is:
+
+```powershell
+uv run raid-editor wizard
+```
+
+The wizard selects a recording, shows the absolute FFprobe stream indexes, asks
+for audio roles and a combat-log path, creates
+`config\<project-slug>.local.yaml`, analyzes pulls, and opens the local review.
+On the first pass, answer **No** when asked to render. The browser downloads
+corrections but cannot write them into the YAML automatically.
+
+For a deliberate command-by-command run:
+
+```powershell
+Copy-Item config\project.example.yaml config\my-raid.local.yaml
+# Edit config\my-raid.local.yaml before continuing.
+uv run raid-editor inspect config\my-raid.local.yaml --open-review
+uv run raid-editor analyse config\my-raid.local.yaml
+uv run raid-editor review config\my-raid.local.yaml
+```
+
+In the pull review:
+
+1. Listen and watch enough source evidence to confirm the mapping.
+2. Correct include flags, titles, start/end seconds, and notes.
+3. Download `pull-overrides.json`.
+4. Move it to a stable local path and set `input.manual_pulls` to that path.
+5. Rerun `analyse` and `review`; verify the corrected version.
+
+Then cross the explicit preview gate:
+
+```powershell
+uv run raid-editor build-timeline config\my-raid.local.yaml
+uv run raid-editor render-preview config\my-raid.local.yaml
+uv run raid-editor validate config\my-raid.local.yaml
+```
+
+Watch the complete preview and read the reports before manually importing the
+FCPXML into Resolve. There is no machine-enforced approval record: the operator
+is responsible for not running `build-timeline` or `render-preview` until the
+review is accepted.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `inspect TARGET` | Probes a YAML project or recording and optionally creates audio samples. |
+| `analyse CONFIG` | Detects pulls and writes JSON, CSV, reports, thumbnails, and short review clips. |
+| `review CONFIG` | Regenerates and opens the local pull review. |
+| `build-timeline CONFIG` | Writes timeline JSON, SRT labels, chapters, FCPXML, Resolve payload, and the microphone-free MOV sidecar. |
+| `create-resolve-project CONFIG` | Attempts unique-project creation through the Python 3.13 Resolve bridge. Use `--dry-run` first. |
+| `render-preview CONFIG` | Renders only the configured review MP4. Use `--dry-run` to prepare artifacts without starting the MP4 render. |
+| `validate CONFIG` | Rebuilds required artifacts, checks source metadata, pull bounds, microphone-stream count, and preview readability. |
+| `wizard [CONFIG]` | Runs the guided setup or reopens the guided review for an existing project. |
+
+Add `--verbose` before the command for diagnostic logging:
+
+```powershell
+uv run raid-editor --verbose analyse config\my-raid.local.yaml
+```
+
+`--dry-run` is not zero-write: timeline, sidecar, reports, payload, and/or filter
+files may still be prepared. It prevents the Resolve bridge call or preview MP4
+render only.
+
+## Configuration essentials
+
+Paths in YAML are resolved relative to that YAML file. Use forward slashes or
+single-quoted Windows paths. Unknown keys are rejected.
+
+```yaml
+project:
+  name: "Pizza Warriors Raid"
+  game: "World of Warcraft"
+  expansion: "Wrath of the Lich King"
+  raid: "Icecrown Citadel"
+  raid_date: 2026-07-26
+
+input:
+  recording: 'D:\Raid Videos\2026-07-26 20-00-00.mov'
+  combat_log: 'D:\world of warcraft 3.3.5a hd\Logs\WoWCombatLog.txt'
+  details_export: null
+  skada_export: null
+  manual_pulls: null
+
+audio:
+  microphone_track: 4
+  game_track: 2
+  discord_track: 3
+  mixed_track: 1
+  keep_game_audio: true
+  keep_discord_audio: true
+  remove_microphone: true
+
+detection:
+  minimum_pull_seconds: 15
+  merge_gap_seconds: 8
+  pre_roll_seconds: 5
+  post_roll_seconds: 8
+  confidence_threshold: 0.70
+  combat_log_offset_seconds: 0
+  recording_started_at: "2026-07-26T20:00:00-03:00"
+
+editing:
+  include_trash_pulls: true
+  include_boss_wipes: true
+  include_boss_kills: true
+  include_run_backs: false
+  include_loot: true
+  transition_duration_seconds: 0.4
+
+music:
+  library: "../music/music-library.json"
+  approved_track_ids: []
+
+preview:
+  resolution: "1280x720"
+  fps: 30
+  bitrate: "4M"
+  hardware_encoding: false
+
+final:
+  resolution: "source"
+  fps: "source"
+  codec: "h264"
+  hardware_encoding: true
+```
+
+Audio numbers are absolute FFprobe stream indexes, not OBS track labels or
+zero-based audio ordinals. Always copy them from `inspect`. At least one
+non-microphone game/Discord stream must be retained. `mixed_track` is not used
+when `remove_microphone: true`.
+
+`manual_pulls`, when set, becomes authoritative and bypasses combat-log and
+Skada detection. Otherwise the detector prefers explicit combat-boundary events.
+For legacy 3.3.5 logs with no boundary events, it deterministically clusters
+damage activity as lower-confidence `unknown` pulls. An optional
+`skada_export` can add timestamped boss segments and outcomes without executing
+the Lua file. These fallbacks still require manual review.
+
+The `details_export`, `preview.hardware_encoding`, and entire `final` section
+are reserved placeholders in this MVP. The preview renderer currently uses
+software `libx264`; no final-render command consumes `final`.
+
+## Generated output
+
+Each project writes to `output\<slug-from-project-name>\`:
+
+```text
+analysis\          media probe, pull candidates, parser issues
+review\            local HTML, audio samples, thumbnails, short clips
+timeline\          timeline.json, timeline.fcpxml, pull-labels.srt
+generated-assets\  source-microphone-free.mov and its manifest
+preview\           review MP4, FFmpeg filter script, manifest
+reports\           chapters, uncertainty, music, audio, edit, validation
+resolve\           create-project.json bridge payload
+```
+
+The source recording, combat log, Skada file, and music files are read-only
+inputs. There is no `clean` command. To remove generated data safely, close
+browsers and Resolve, verify the exact project folder under `output`, and remove
+only that folder. See [Security and privacy](docs/security-and-privacy.md) for a
+guarded PowerShell example and the list of files that live outside `output`.
+
+## Documentation
+
+- [OBS recording setup](docs/obs-recording-setup.md)
+- [Combat-log and Skada setup](docs/combat-log-setup.md)
+- [Music licensing workflow](docs/music-licensing.md)
+- [Resolve setup and deterministic fallback](docs/resolve-setup.md)
+- [Resolve computer-use runbook](docs/resolve-computer-use-runbook.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security, privacy, and generated-file removal](docs/security-and-privacy.md)
+
+## Explicit MVP limitations
+
+- One recording per project; no multi-file stitching.
+- The current portrait source is fitted and padded, not automatically cropped,
+  rotated, or reframed.
+- Microphone removal is track exclusion, not voice separation. A dedicated mic
+  track and at least one microphone-free program track are mandatory.
+- Pull detection is evidence-based, not gameplay understanding. Damage-activity
+  clusters are lower-confidence and unclassified; Skada evidence can still be
+  misaligned.
+- The browser review downloads files but does not apply them.
+- Only the first approved music ID is mixed into the preview. Music is not added
+  to FCPXML or the Resolve project.
+- The preview is not a final master and is not persistently watermarked.
+- Synthetic H.264 FCPXML/Resolve import is proven on this host. Import of the
+  current real MOV/HEVC sidecar remains unproven.
+- The API bridge may require Resolve Studio. It refuses to modify an existing
+  project and contains no render-job, final-render, upload, or publishing code.
+- Validation is useful but bounded: source safety compares size and nanosecond
+  modification time with the probe, and the fingerprint hashes only bounded
+  head/tail chunks rather than the entire recording.
+- No command uploads, publishes, or deletes source material.

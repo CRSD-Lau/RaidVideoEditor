@@ -1,0 +1,55 @@
+project:
+  name: "Synthetic Pizza Warriors Raid"
+  game: "World of Warcraft"
+  expansion: "Test Fixture"
+  raid: "Deterministic Training Hall"
+  raid_date: 2026-07-26
+
+input:
+  recording: "generated/synthetic-raid.mkv"
+  combat_log: "generated/WoWCombatLog.txt"
+  details_export: null
+  skada_export: null
+  manual_pulls: null
+
+audio:
+  microphone_track: 4
+  game_track: 2
+  discord_track: 3
+  mixed_track: 1
+  keep_game_audio: true
+  keep_discord_audio: true
+  remove_microphone: true
+
+detection:
+  minimum_pull_seconds: 2
+  merge_gap_seconds: 2
+  pre_roll_seconds: 1
+  post_roll_seconds: 1
+  confidence_threshold: 0.70
+  combat_log_offset_seconds: 0
+  recording_started_at: "2026-07-26T20:00:00-03:00"
+
+editing:
+  include_trash_pulls: true
+  include_boss_wipes: true
+  include_boss_kills: true
+  include_run_backs: false
+  include_loot: true
+  transition_duration_seconds: 0.2
+
+music:
+  library: "../music/music-library.json"
+  approved_track_ids: []
+
+preview:
+  resolution: "1280x720"
+  fps: 30
+  bitrate: "1M"
+  hardware_encoding: false
+
+final:
+  resolution: "source"
+  fps: "source"
+  codec: "h264"
+  hardware_encoding: true

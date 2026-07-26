@@ -1,0 +1,147 @@
+# Security, privacy, and generated-file removal
+
+The MVP is designed to run locally and to leave source files unchanged. Local
+does not mean non-sensitive: generated samples, clips, reports, and timelines can
+contain voice, player names, file paths, and licensing evidence.
+
+## Network and publication boundary
+
+Runtime commands do not implement cloud storage, telemetry, authentication,
+upload, YouTube publishing, or remote music acquisition. Browser-opening
+commands open a local `file:` page.
+
+There is no final-render command and no upload command. The Resolve bridge
+payload explicitly forbids adding a render job, starting rendering, or
+uploading.
+
+The operator can still share files manually or use another application's
+network features. Keep the review workspace outside synchronized folders unless
+that sharing is intentional.
+
+## Source safety
+
+Read-only inputs include:
+
+- the OBS recording;
+- the combat log;
+- the optional Skada SavedVariables file;
+- the optional manual-pull file;
+- the music library and music files.
+
+The CLI writes beneath `output\<project-slug>\` and may create
+`config\<project-slug>.local.yaml` through the wizard. It never intentionally
+renames, moves, deletes, or overwrites the source inputs.
+
+`validate` checks that the source size and nanosecond modification time still
+match the cached probe. The media fingerprint hashes bounded head/tail chunks,
+not the complete recording. Treat this as a practical change detector, not a
+cryptographic proof that every source byte remained unchanged.
+
+`validate` and both `--dry-run` paths are not read-only. They can rebuild
+timeline, sidecar, report, manifest, payload, and filter files.
+
+## Sensitive generated content
+
+| Artifact | Possible sensitive content |
+| --- | --- |
+| `analysis\media-probe.json` | Absolute recording path, timestamps, stream metadata, bounded fingerprint |
+| `analysis\analysis-manifest.json` | Bounded fingerprints for recording, combat log, Skada, and manual pulls |
+| `analysis\combat-log-issues.json` | Raw malformed log rows, character/unit IDs and names |
+| `review\audio-samples\*.wav` | Every inspected stream, including microphone speech |
+| `review\assets\*.mp4` | Gameplay and retained voice comms |
+| `review\pull-review.html` | Encounter names, notes, evidence, local media references |
+| `timeline\timeline.fcpxml` | Absolute `file:` URI to the generated sidecar |
+| `resolve\create-project.json` | Absolute sidecar path, clip labels and ranges |
+| `reports\*` | Raid titles, detected encounters, audio names, music/license evidence |
+| `preview\*.mp4` | Condensed gameplay, Discord/raid comms, optional music |
+
+The audio-identification page intentionally samples every stream because the
+operator must identify the mic. Do not share it as proof of a “mic-free” result.
+
+## Local HTML
+
+Review pages are static HTML with local relative media and no remote scripts,
+fonts, analytics, or server. They can still reveal local content when copied
+with their asset folder.
+
+The browser cannot safely overwrite project files. It downloads
+`audio-map.json` or `pull-overrides.json`; the operator must inspect and apply
+those files. Treat downloaded JSON as untrusted input until the CLI validates
+it.
+
+## Combat and Skada parsing
+
+Combat logs are read as text with replacement for invalid UTF-8. Malformed
+relevant rows can be copied into the issue report.
+
+The Skada parser does not execute Lua or import the SavedVariables file as code.
+It scans structural braces and a restricted set of top-level scalar assignments.
+Nested actor/damage content is ignored. Keep untrusted SavedVariables files
+local; this restricted parser does not make the rest of the file safe to execute
+elsewhere.
+
+## Resolve scripting
+
+The current Resolve installation is apparently non-Studio, and API success has
+not been demonstrated. If Studio is later used:
+
+- enable external scripting for **Local** only, not network access;
+- use the isolated Python 3.13 bridge;
+- inspect the JSON payload before execution;
+- operate in a new unique project; and
+- stop before Deliver, Quick Export, render queue, sign-in, or upload controls.
+
+The bridge sets API environment variables only in its own process. It does not
+need persistent machine/user environment changes.
+
+A bridge failure after project creation can leave a partial Resolve project.
+The CLI never deletes it automatically.
+
+## Safely remove generated files
+
+There is no `clean` command. Close browser tabs and Resolve first. Determine the
+exact output folder from the project's `project.name` or from command output.
+Then use a guarded PowerShell deletion.
+
+Example for `output\pizza-warriors-raid`:
+
+```powershell
+Set-Location C:\Projects\RaidVideoEditor
+$outputRoot = (Resolve-Path -LiteralPath '.\output').Path
+$generated = (Resolve-Path -LiteralPath '.\output\pizza-warriors-raid').Path
+$requiredPrefix = $outputRoot + [IO.Path]::DirectorySeparatorChar
+if (-not $generated.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove a path outside the output directory: $generated"
+}
+Get-ChildItem -LiteralPath $generated -Force
+Remove-Item -LiteralPath $generated -Recurse -Force
+```
+
+This removes only that generated project folder. It does not remove:
+
+- the recording, combat log, Skada file, music, or other source;
+- `config\<slug>.local.yaml` created by the wizard;
+- a downloaded `audio-map.json` or `pull-overrides.json` saved elsewhere;
+- a manual-pull file moved beside the config;
+- a Resolve project created through the API or UI; or
+- files copied out of the output folder.
+
+Remove those separately only after resolving and verifying their exact paths.
+Do not use `Remove-Item .\output\* -Recurse`, a broad drive path, an unresolved
+environment variable, or a wildcard derived from project input.
+
+Generated output is reproducible from the current config and inputs, but manual
+correction files and license evidence are user decisions. Back those up before
+deleting anything.
+
+## Before sharing a preview
+
+- Watch the full preview for microphone leakage.
+- Confirm it contains no private overlays, chat, account details, or accidental
+  desktop capture.
+- Check whether Discord participants consent to sharing.
+- Verify music permission and attribution.
+- Remove local-path JSON/XML and raw audio samples from any share package.
+- Share only the intended MP4 and deliberately selected reports.
+- Remember that the preview is not a final master and has no persistent visual
+  watermark.
