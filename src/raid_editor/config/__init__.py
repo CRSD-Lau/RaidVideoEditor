@@ -1,0 +1,1 @@
+"""Validated project configuration."""

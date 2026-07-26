@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wow-raid-video-editor"
+version = "0.1.0"
+description = "Local, review-first automation for condensing World of Warcraft raid recordings."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Neil Mitchell" }]
+dependencies = [
+  "pydantic>=2.11,<3",
+  "PyYAML>=6.0.2,<7",
+  "typer>=0.16,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<10",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+  "types-PyYAML>=6.0.12,<7",
+]
+
+[project.scripts]
+raid-editor = "raid_editor.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/raid_editor"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+ignore = ["S101", "S603"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S603", "S607"]
+"scripts/generate-synthetic-fixture.py" = ["E501"]
+"src/raid_editor/audio/tracks.py" = ["E501"]
+"src/raid_editor/cli.py" = ["B008"]
+"src/raid_editor/review/html.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["raid_editor"]

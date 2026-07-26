@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Local/user configuration and secrets
+config/project.yaml
+config/*.local.yaml
+.env
+*.token
+*.key
+
+# Source media and generated media
+*.mkv
+*.mp4
+*.mov
+*.avi
+*.wav
+*.flac
+*.aac
+*.mp3
+*.m4a
+*.drp
+*.dra
+output/*
+!output/.gitkeep
+samples/generated/*
+!samples/generated/.gitkeep
+music/files/*
+!music/files/.gitkeep
+
+# Editor / OS
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
