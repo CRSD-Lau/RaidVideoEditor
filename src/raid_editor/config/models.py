@@ -108,12 +108,23 @@ class WatermarkConfig(StrictModel):
         return self
 
 
+class PresentationConfig(StrictModel):
+    intro_seconds: float = Field(default=5.0, ge=0, le=15)
+    outro_seconds: float = Field(default=5.0, ge=0, le=15)
+    intro_title: str = "PIZZA WARRIORS"
+    intro_subtitle: str = "ICECROWN CITADEL"
+    outro_title: str = "RAID COMPLETE"
+    outro_subtitle: str = "PIZZA WARRIORS"
+    boss_kicker: str = "PIZZA WARRIORS"
+
+
 class PreviewConfig(StrictModel):
     resolution: str = "1280x720"
     fps: int = Field(default=30, gt=0, le=120)
     bitrate: str = "4M"
     hardware_encoding: bool = False
     watermark: WatermarkConfig | None = None
+    presentation: PresentationConfig | None = None
 
     @field_validator("resolution")
     @classmethod

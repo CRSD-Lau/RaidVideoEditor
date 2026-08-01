@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from raid_editor.config.models import WatermarkConfig
+from raid_editor.config.models import PresentationConfig, WatermarkConfig
 from raid_editor.models import TimelineDocument
 from raid_editor.music.library import MusicTrack
 from raid_editor.timeline.export import timeline_digest
@@ -34,12 +34,17 @@ def build_filter_graph(
     transition_seconds: float,
     music: MusicTrack | None,
     watermark: WatermarkConfig | None = None,
+    presentation: PresentationConfig | None = None,
 ) -> str:
     if not timeline.clips:
         raise PreviewRenderError("Timeline has no included clips")
     filters: list[str] = []
     video_labels: list[str] = []
     transition = max(0.0, transition_seconds)
+    intro_seconds = presentation.intro_seconds if presentation is not None else 0.0
+    outro_seconds = presentation.outro_seconds if presentation is not None else 0.0
+    has_cards = intro_seconds > 0 or outro_seconds > 0
+    boss_kicker = presentation.boss_kicker if presentation is not None else "PIZZA WARRIORS"
     for clip_index, clip in enumerate(timeline.clips):
         duration = clip.source_out - clip.source_in
         fade = min(transition, duration / 4)
@@ -50,10 +55,18 @@ def build_filter_graph(
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"fps={fps},"
-            "drawbox=x=0:y=0:w=iw:h=72:color=black@0.55:t=fill:enable='lt(t,4)',"
-            "drawtext=fontfile='C\\:/Windows/Fonts/segoeui.ttf':"
+            "drawbox=x=24:y=18:w=704:h=94:color=0x05070D@0.82:t=fill:"
+            "enable='lt(t,4)',"
+            "drawbox=x=24:y=18:w=5:h=94:color=0xD79A2B@0.96:t=fill:"
+            "enable='lt(t,4)',"
+            "drawbox=x=29:y=108:w=699:h=2:color=0xD79A2B@0.82:t=fill:"
+            "enable='lt(t,4)',"
+            "drawtext=fontfile='C\\:/Windows/Fonts/georgiab.ttf':"
             f"text='{_escape_drawtext(clip.label)}':"
-            "fontcolor=white:fontsize=30:x=36:y=22:enable='lt(t,4)'"
+            "fontcolor=0xF2D28B:fontsize=32:x=48:y=28:enable='lt(t,4)',"
+            "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+            f"text='{_escape_drawtext(boss_kicker)}':"
+            "fontcolor=0x8ECDF2:fontsize=14:x=49:y=72:enable='lt(t,4)'"
         )
         if fade > 0:
             video_filter += (
@@ -62,26 +75,121 @@ def build_filter_graph(
             )
         filters.append(f"{video_filter}[{label}]")
         video_labels.append(f"[{label}]")
-    video_output = "vbase" if watermark is not None else "vout"
     filters.append(
         "".join(video_labels)
-        + f"concat=n={len(video_labels)}:v=1:a=0,format=yuv420p[{video_output}]"
+        + f"concat=n={len(video_labels)}:v=1:a=0,format=yuv420p[vbase]"
     )
+
+    logo_labels: dict[str, str] = {}
     if watermark is not None:
         watermark_input = 1 + int(music is not None)
+        logo_branches = ["watermark_raw"]
+        if intro_seconds > 0:
+            logo_branches.append("intro_logo_raw")
+        if outro_seconds > 0:
+            logo_branches.append("outro_logo_raw")
+        if len(logo_branches) > 1:
+            outputs = "".join(f"[{label}]" for label in logo_branches)
+            filters.append(f"[{watermark_input}:v:0]split={len(logo_branches)}{outputs}")
+            watermark_source = "[watermark_raw]"
+        else:
+            watermark_source = f"[{watermark_input}:v:0]"
+        if intro_seconds > 0:
+            logo_labels["intro"] = "intro_logo_raw"
+        if outro_seconds > 0:
+            logo_labels["outro"] = "outro_logo_raw"
         watermark_width = max(1, round(width * watermark.width_fraction))
         watermark_height = max(1, round(height * watermark.height_fraction))
         watermark_x = round(width * watermark.x_fraction)
         watermark_y = round(height * watermark.y_fraction)
         filters.append(
-            f"[{watermark_input}:v:0]scale={watermark_width}:{watermark_height}:"
+            f"{watermark_source}fps={fps},scale={watermark_width}:{watermark_height}:"
             "force_original_aspect_ratio=decrease,"
             f"pad={watermark_width}:{watermark_height}:(ow-iw)/2:(oh-ih)/2:color=black,"
             "setsar=1[watermark]"
         )
         filters.append(
-            f"[vbase][watermark]overlay=x={watermark_x}:y={watermark_y}:shortest=1[vout]"
+            f"[vbase][watermark]overlay=x={watermark_x}:y={watermark_y}:"
+            "shortest=1:eof_action=endall[vprogram]"
         )
+        program_video = "vprogram"
+    else:
+        program_video = "vbase"
+
+    def add_card(
+        card_name: str,
+        duration: float,
+        title: str,
+        subtitle: str,
+    ) -> str:
+        background = f"{card_name}_background"
+        canvas = f"{card_name}_canvas"
+        output = f"v{card_name}"
+        filters.append(
+            f"color=c=0x04070D:s={width}x{height}:r={fps}:d={duration:.6f},"
+            f"format=yuv420p[{background}]"
+        )
+        logo_source = logo_labels.get(card_name)
+        if logo_source is not None:
+            logo_size = max(1, round(height * 0.42))
+            logo = f"{card_name}_logo"
+            filters.append(
+                f"[{logo_source}]fps={fps},trim=duration={duration:.6f},"
+                "setpts=PTS-STARTPTS,"
+                f"scale={logo_size}:{logo_size}:force_original_aspect_ratio=decrease,"
+                f"pad={logo_size}:{logo_size}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
+                f"setsar=1,format=rgba[{logo}]"
+            )
+            filters.append(
+                f"[{background}][{logo}]overlay=x=(W-w)/2:y={round(height * 0.075)}:"
+                f"shortest=1[{canvas}]"
+            )
+        else:
+            filters.append(f"[{background}]null[{canvas}]")
+        fade = min(0.5, duration / 4)
+        filters.append(
+            f"[{canvas}]"
+            "drawbox=x=(iw-620)/2:y=400:w=620:h=2:color=0xD79A2B@0.88:t=fill,"
+            "drawtext=fontfile='C\\:/Windows/Fonts/georgiab.ttf':"
+            f"text='{_escape_drawtext(title)}':fontcolor=0xF2D28B:fontsize=44:"
+            "x=(w-text_w)/2:y=416,"
+            "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+            f"text='{_escape_drawtext(subtitle)}':fontcolor=0x8ECDF2:fontsize=20:"
+            "x=(w-text_w)/2:y=478,"
+            "drawbox=x=(iw-420)/2:y=520:w=420:h=2:color=0xD79A2B@0.62:t=fill,"
+            f"fade=t=in:st=0:d={fade:.3f},"
+            f"fade=t=out:st={max(0.0, duration - fade):.6f}:d={fade:.3f},"
+            f"format=yuv420p[{output}]"
+        )
+        return output
+
+    video_sequence: list[str] = []
+    if intro_seconds > 0 and presentation is not None:
+        video_sequence.append(
+            add_card(
+                "intro",
+                intro_seconds,
+                presentation.intro_title,
+                presentation.intro_subtitle,
+            )
+        )
+    video_sequence.append(program_video)
+    if outro_seconds > 0 and presentation is not None:
+        video_sequence.append(
+            add_card(
+                "outro",
+                outro_seconds,
+                presentation.outro_title,
+                presentation.outro_subtitle,
+            )
+        )
+    if has_cards:
+        filters.append(
+            "".join(f"[{label}]" for label in video_sequence)
+            + f"concat=n={len(video_sequence)}:v=1:a=0,format=yuv420p[vout]"
+        )
+    else:
+        filters.append(f"[{program_video}]format=yuv420p[vout]")
 
     track_outputs: list[str] = []
     for track_number, stream_index in enumerate(timeline.retained_audio_stream_indexes):
@@ -119,13 +227,43 @@ def build_filter_graph(
         mix_inputs.append("[music]")
     if not mix_inputs:
         raise PreviewRenderError("Preview has no retained audio; configure audio roles first")
+    audio_output = "aprogram" if has_cards else "aout"
     if len(mix_inputs) == 1:
-        filters.append(f"{mix_inputs[0]}alimiter=limit=0.95[aout]")
+        filters.append(
+            f"{mix_inputs[0]}alimiter=limit=0.95,"
+            "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+            f"[{audio_output}]"
+        )
     else:
         filters.append(
             "".join(mix_inputs)
             + f"amix=inputs={len(mix_inputs)}:duration=longest:dropout_transition=2:"
-            "normalize=0,alimiter=limit=0.95[aout]"
+            "normalize=0,alimiter=limit=0.95,"
+            "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+            f"[{audio_output}]"
+        )
+    if has_cards:
+        audio_sequence: list[str] = []
+        if intro_seconds > 0:
+            filters.append(
+                "anullsrc=r=48000:cl=stereo,"
+                f"atrim=duration={intro_seconds:.6f},asetpts=PTS-STARTPTS,"
+                "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+                "[aintro]"
+            )
+            audio_sequence.append("aintro")
+        audio_sequence.append("aprogram")
+        if outro_seconds > 0:
+            filters.append(
+                "anullsrc=r=48000:cl=stereo,"
+                f"atrim=duration={outro_seconds:.6f},asetpts=PTS-STARTPTS,"
+                "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+                "[aoutro]"
+            )
+            audio_sequence.append("aoutro")
+        filters.append(
+            "".join(f"[{label}]" for label in audio_sequence)
+            + f"concat=n={len(audio_sequence)}:v=0:a=1[aout]"
         )
     return ";\n".join(filters) + "\n"
 
@@ -144,7 +282,10 @@ def build_preview_command(
     if music is not None:
         command.extend(["-stream_loop", "-1", "-i", str(music.local_file)])
     if watermark is not None:
-        command.extend(["-loop", "1", "-i", str(watermark)])
+        if watermark.suffix.casefold() == ".gif":
+            command.extend(["-stream_loop", "-1", "-ignore_loop", "1", "-i", str(watermark)])
+        else:
+            command.extend(["-loop", "1", "-i", str(watermark)])
     command.extend(
         [
             "-/filter_complex",
@@ -216,6 +357,7 @@ def render_preview(
     music: MusicTrack | None = None,
     hardware_encoding: bool = False,
     watermark: WatermarkConfig | None = None,
+    presentation: PresentationConfig | None = None,
     dry_run: bool = False,
 ) -> list[str]:
     width_text, height_text = resolution.split("x", maxsplit=1)
@@ -230,6 +372,7 @@ def render_preview(
         transition_seconds=transition_seconds,
         music=music,
         watermark=watermark,
+        presentation=presentation,
     )
     atomic_write_text(filter_script, graph)
     command = build_preview_command(
@@ -261,7 +404,10 @@ def render_preview(
                 return command
         except (OSError, json.JSONDecodeError):
             pass
-    estimated_bytes = (_bitrate_bits_per_second(bitrate) + 192_000) * timeline.duration_seconds / 8
+    intro_seconds = presentation.intro_seconds if presentation is not None else 0.0
+    outro_seconds = presentation.outro_seconds if presentation is not None else 0.0
+    output_duration = timeline.duration_seconds + intro_seconds + outro_seconds
+    estimated_bytes = (_bitrate_bits_per_second(bitrate) + 192_000) * output_duration / 8
     free_bytes = shutil.disk_usage(destination.parent).free
     if free_bytes < estimated_bytes * 1.5:
         raise PreviewRenderError(
@@ -281,6 +427,8 @@ def render_preview(
             "signature": signature,
             "review_only": True,
             "timeline_duration_seconds": timeline.duration_seconds,
+            "output_duration_seconds": output_duration,
+            "presentation": presentation.model_dump(mode="json") if presentation else None,
             "music_track_id": music.id if music else None,
         },
     )

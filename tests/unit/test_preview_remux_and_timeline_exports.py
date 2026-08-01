@@ -8,7 +8,7 @@ import pytest
 
 import raid_editor.audio.tracks as audio_tracks
 from raid_editor.audio.tracks import AudioMappingError, create_mic_free_remux
-from raid_editor.config.models import WatermarkConfig
+from raid_editor.config.models import PresentationConfig, WatermarkConfig
 from raid_editor.ingestion.probe import AudioStream, MediaProbe
 from raid_editor.models import TimelineClip, TimelineDocument
 from raid_editor.rendering.preview import build_filter_graph, build_preview_command
@@ -163,6 +163,67 @@ def test_preview_graph_and_command_overlay_a_camera_cover(tmp_path: Path) -> Non
     assert "overlay=x=0:y=540" in graph
     assert command[command.index("-loop") + 1] == "1"
     assert str(cover) in command
+
+
+def test_preview_command_loops_an_animated_gif_watermark(tmp_path: Path) -> None:
+    logo = tmp_path / "pizza-warriors.gif"
+    logo.write_bytes(b"animated image placeholder")
+
+    command = build_preview_command(
+        _timeline(tmp_path / "source.mkv"),
+        tmp_path / "review.filters.txt",
+        tmp_path / "review.mp4",
+        bitrate="4M",
+        music=None,
+        watermark=logo,
+    )
+
+    assert command[command.index("-stream_loop") + 1] == "-1"
+    assert command[command.index("-ignore_loop") + 1] == "1"
+    assert "-loop" not in command
+    assert str(logo) in command
+
+
+def test_preview_graph_adds_branded_intro_outro_and_boss_titles(tmp_path: Path) -> None:
+    logo = tmp_path / "pizza-warriors.gif"
+    logo.write_bytes(b"animated image placeholder")
+    watermark = WatermarkConfig(
+        image=logo,
+        x_fraction=0,
+        y_fraction=0.75,
+        width_fraction=0.25,
+        height_fraction=0.25,
+    )
+    presentation = PresentationConfig(
+        intro_seconds=5,
+        outro_seconds=5,
+        intro_title="PIZZA WARRIORS",
+        intro_subtitle="ICECROWN CITADEL",
+        outro_title="RAID COMPLETE",
+        outro_subtitle="PIZZA WARRIORS",
+        boss_kicker="PIZZA WARRIORS — ICC",
+    )
+
+    graph = build_filter_graph(
+        _timeline(tmp_path / "source.mkv"),
+        width=1280,
+        height=720,
+        fps=30,
+        transition_seconds=0.2,
+        music=None,
+        watermark=watermark,
+        presentation=presentation,
+    )
+
+    assert "split=3[watermark_raw][intro_logo_raw][outro_logo_raw]" in graph
+    assert "text='PIZZA WARRIORS'" in graph
+    assert "text='ICECROWN CITADEL'" in graph
+    assert "text='RAID COMPLETE'" in graph
+    assert "text='PIZZA WARRIORS — ICC'" in graph
+    assert "fontfile='C\\:/Windows/Fonts/georgiab.ttf'" in graph
+    assert "concat=n=3:v=1:a=0" in graph
+    assert graph.count("anullsrc=r=48000:cl=stereo") == 2
+    assert "concat=n=3:v=0:a=1[aout]" in graph
 
 
 def test_mic_free_remux_maps_retained_streams_and_never_changes_source(

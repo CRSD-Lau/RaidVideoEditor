@@ -47,6 +47,8 @@ preview:
   fps: 30
   bitrate: "4M"
   hardware_encoding: false
+  watermark: null
+  presentation: null
 
 final:
   resolution: "source"

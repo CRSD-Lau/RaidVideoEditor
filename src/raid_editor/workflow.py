@@ -311,6 +311,7 @@ def render_preview_project(
         music=music[0] if music else None,
         hardware_encoding=config.preview.hardware_encoding,
         watermark=config.preview.watermark,
+        presentation=config.preview.presentation,
         dry_run=dry_run,
     )
     retained_names = [
