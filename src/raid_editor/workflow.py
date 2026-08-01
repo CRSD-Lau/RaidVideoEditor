@@ -31,7 +31,7 @@ from raid_editor.music.library import (
     write_music_plan,
     write_music_reports,
 )
-from raid_editor.rendering.preview import render_preview
+from raid_editor.rendering.preview import FinalRenderError, render_final, render_preview
 from raid_editor.reporting.pulls import write_pull_candidates, write_uncertain_segments
 from raid_editor.reporting.summary import (
     validate_artifacts,
@@ -67,6 +67,7 @@ class ProjectPaths:
     timeline: Path
     generated_assets: Path
     preview: Path
+    final_master: Path
     reports: Path
     resolve: Path
 
@@ -80,6 +81,7 @@ class ProjectPaths:
             timeline=root / "timeline",
             generated_assets=root / "generated-assets",
             preview=root / "preview",
+            final_master=root / "final",
             reports=root / "reports",
             resolve=root / "resolve",
         )
@@ -91,6 +93,7 @@ class ProjectPaths:
             self.timeline,
             self.generated_assets,
             self.preview,
+            self.final_master,
             self.reports,
             self.resolve,
         ):
@@ -351,6 +354,130 @@ def render_preview_project(
         )
         write_audio_report(before, after, paths.reports / "audio-analysis.md")
     return preview, paths
+
+
+def render_final_project(
+    config: ProjectConfig,
+    *,
+    approved: bool = False,
+    dry_run: bool = False,
+) -> tuple[Path, ProjectPaths, dict[str, object] | None]:
+    if not approved and not dry_run:
+        raise FinalRenderError(
+            "Final rendering requires explicit approval; rerun with --approved after reviewing "
+            "the complete preview"
+        )
+    review_validation, _ = validate_project_artifacts(config)
+    if review_validation["status"] != "passed":
+        raise FinalRenderError("The review validation must pass before final rendering")
+    probe, _, timeline, _, paths = build_timeline_project(config)
+    video = probe.video_streams[0] if probe.video_streams else None
+    if video is None:
+        raise FinalRenderError("The source has no usable video stream")
+    if config.final.resolution == "source":
+        resolution = f"{video.width}x{video.height}"
+    else:
+        resolution = config.final.resolution
+    if config.final.fps == "source":
+        if video.frame_rate is None:
+            raise FinalRenderError("The source frame rate is unavailable")
+        fps = round(video.frame_rate)
+        if abs(video.frame_rate - fps) > 0.01:
+            raise FinalRenderError(
+                "The source uses a fractional frame rate; configure final.fps explicitly"
+            )
+    else:
+        fps = int(config.final.fps)
+    width_text, height_text = resolution.split("x", maxsplit=1)
+    width, height = int(width_text), int(height_text)
+    music = selected_music(config)
+    destination = (
+        paths.final_master / f"{paths.root.name}-final-{height}p{fps}.mp4"
+    )
+    render_final(
+        timeline,
+        destination,
+        resolution=resolution,
+        fps=fps,
+        codec=config.final.codec,
+        constant_qp=config.final.constant_qp,
+        preset=config.final.preset,
+        audio_bitrate=config.final.audio_bitrate,
+        transition_seconds=config.editing.transition_duration_seconds,
+        music=music[0] if music else None,
+        hardware_encoding=config.final.hardware_encoding,
+        watermark=config.preview.watermark,
+        presentation=config.preview.presentation,
+        approved=approved,
+        dry_run=dry_run,
+    )
+    if dry_run:
+        return destination, paths, None
+
+    final_probe = probe_media(destination)
+    expected_duration = timeline.duration_seconds
+    if config.preview.presentation is not None:
+        expected_duration += config.preview.presentation.intro_seconds
+        expected_duration += config.preview.presentation.outro_seconds
+    source_path = Path(str(probe.source["path"]))
+    source_stat = source_path.stat()
+    checks = [
+        {
+            "name": "approval_recorded",
+            "passed": destination.with_suffix(".manifest.json").is_file(),
+            "detail": "the final manifest records the explicit approval gate",
+        },
+        {
+            "name": "source_not_modified",
+            "passed": (
+                source_stat.st_size == probe.source["size_bytes"]
+                and source_stat.st_mtime_ns == probe.source["modified_ns"]
+            ),
+            "detail": "size and nanosecond mtime still match the initial source probe",
+        },
+        {
+            "name": "final_video_geometry",
+            "passed": (
+                len(final_probe.video_streams) == 1
+                and final_probe.video_streams[0].width == width
+                and final_probe.video_streams[0].height == height
+                and final_probe.video_streams[0].frame_rate is not None
+                and abs(final_probe.video_streams[0].frame_rate - fps) < 0.01
+            ),
+            "detail": f"final video is {resolution} at {fps} fps",
+        },
+        {
+            "name": "final_duration",
+            "passed": abs(final_probe.duration_seconds - expected_duration) < 0.1,
+            "detail": f"final duration matches the approved {expected_duration:.3f}-second edit",
+        },
+        {
+            "name": "final_audio_mapping",
+            "passed": (
+                len(final_probe.audio_streams) == 1
+                and timeline.excluded_microphone_stream_index
+                not in timeline.retained_audio_stream_indexes
+            ),
+            "detail": "one mixed output track is present and the microphone stream stays excluded",
+        },
+        {
+            "name": "upload_absent",
+            "passed": True,
+            "detail": "the final-render workflow performs no upload or publishing action",
+        },
+    ]
+    final_validation: dict[str, object] = {
+        "status": "passed" if all(bool(check["passed"]) for check in checks) else "failed",
+        "checks": checks,
+    }
+    write_validation_report(
+        final_validation,
+        paths.reports / "final-validation.json",
+        paths.reports / "final-validation.md",
+    )
+    if final_validation["status"] != "passed":
+        raise FinalRenderError("The final master rendered but failed post-render validation")
+    return destination, paths, final_validation
 
 
 def validate_project_artifacts(config: ProjectConfig) -> tuple[dict[str, object], ProjectPaths]:

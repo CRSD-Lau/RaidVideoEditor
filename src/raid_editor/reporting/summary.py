@@ -99,7 +99,7 @@ def write_edit_summary(
         "- Deterministic FFmpeg review render: configured",
         "- DaVinci Resolve external scripting: blocked on this host by the apparent non-Studio "
         "edition; FCPXML and a Python 3.13 bridge payload are generated",
-        "- Final rendering: intentionally unavailable in the MVP CLI",
+        "- Final rendering: available only through the explicit post-review approval gate",
         "- Upload/publishing: not implemented",
         "",
         "## Recommended manual review",
@@ -165,7 +165,11 @@ def validate_artifacts(
         preview_exists and preview_probe is not None,
         "review MP4 exists and FFprobe can read it",
     )
-    add("final_render_gated", True, "the CLI exposes no final-render command")
+    add(
+        "final_render_approval_gate",
+        True,
+        "final rendering requires an explicit --approved flag after review",
+    )
     add("youtube_upload_absent", True, "no authentication or publishing module exists")
     return {
         "status": "passed" if all(check["passed"] for check in checks) else "failed",

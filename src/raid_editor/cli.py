@@ -25,6 +25,7 @@ from raid_editor.workflow import (
     analyse_project,
     build_timeline_project,
     inspect_project,
+    render_final_project,
     render_preview_project,
     validate_project_artifacts,
 )
@@ -187,6 +188,33 @@ def render_preview_command(
             ("Preview command prepared for: " if dry_run else "Review render: ") + str(preview)
         )
         typer.echo(f"Edit summary: {paths.reports / 'edit-summary.md'}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("render-final")
+def render_final_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm the complete preview was reviewed and accepted.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Render an approved local master; never upload or publish it."""
+
+    try:
+        config = load_project_config(config_path)
+        final, paths, validation = render_final_project(
+            config,
+            approved=approved,
+            dry_run=dry_run,
+        )
+        typer.echo(("Final command prepared for: " if dry_run else "Final master: ") + str(final))
+        if validation is not None:
+            typer.echo(f"Final validation: {str(validation['status']).upper()}")
+            typer.echo(f"Report: {paths.reports / 'final-validation.md'}")
     except (OSError, ValueError, RuntimeError) as exc:
         _error(exc)
 

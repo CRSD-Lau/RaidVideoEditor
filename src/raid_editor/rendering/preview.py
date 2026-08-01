@@ -1,4 +1,4 @@
-"""FFmpeg preview rendering; no final-render or upload path exists here."""
+"""FFmpeg rendering for review media and explicitly approved local masters."""
 
 from __future__ import annotations
 
@@ -18,6 +18,10 @@ from raid_editor.util.paths import atomic_write_json, atomic_write_text, ensure_
 
 class PreviewRenderError(RuntimeError):
     """Expected, user-actionable review-render failure."""
+
+
+class FinalRenderError(RuntimeError):
+    """Expected, user-actionable approved-master render failure."""
 
 
 def _escape_drawtext(value: str) -> str:
@@ -41,6 +45,11 @@ def build_filter_graph(
     filters: list[str] = []
     video_labels: list[str] = []
     transition = max(0.0, transition_seconds)
+    ui_scale = height / 720
+
+    def ui(value: int) -> int:
+        return max(1, round(value * ui_scale))
+
     intro_seconds = presentation.intro_seconds if presentation is not None else 0.0
     outro_seconds = presentation.outro_seconds if presentation is not None else 0.0
     has_cards = intro_seconds > 0 or outro_seconds > 0
@@ -55,18 +64,23 @@ def build_filter_graph(
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"fps={fps},"
-            "drawbox=x=24:y=18:w=704:h=94:color=0x05070D@0.82:t=fill:"
+            f"drawbox=x={ui(24)}:y={ui(18)}:w={ui(704)}:h={ui(94)}:"
+            "color=0x05070D@0.82:t=fill:"
             "enable='lt(t,4)',"
-            "drawbox=x=24:y=18:w=5:h=94:color=0xD79A2B@0.96:t=fill:"
+            f"drawbox=x={ui(24)}:y={ui(18)}:w={ui(5)}:h={ui(94)}:"
+            "color=0xD79A2B@0.96:t=fill:"
             "enable='lt(t,4)',"
-            "drawbox=x=29:y=108:w=699:h=2:color=0xD79A2B@0.82:t=fill:"
+            f"drawbox=x={ui(29)}:y={ui(108)}:w={ui(699)}:h={ui(2)}:"
+            "color=0xD79A2B@0.82:t=fill:"
             "enable='lt(t,4)',"
             "drawtext=fontfile='C\\:/Windows/Fonts/georgiab.ttf':"
             f"text='{_escape_drawtext(clip.label)}':"
-            "fontcolor=0xF2D28B:fontsize=32:x=48:y=28:enable='lt(t,4)',"
+            f"fontcolor=0xF2D28B:fontsize={ui(32)}:x={ui(48)}:y={ui(28)}:"
+            "enable='lt(t,4)',"
             "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
             f"text='{_escape_drawtext(boss_kicker)}':"
-            "fontcolor=0x8ECDF2:fontsize=14:x=49:y=72:enable='lt(t,4)'"
+            f"fontcolor=0x8ECDF2:fontsize={ui(14)}:x={ui(49)}:y={ui(72)}:"
+            "enable='lt(t,4)'"
         )
         if fade > 0:
             video_filter += (
@@ -149,14 +163,16 @@ def build_filter_graph(
         fade = min(0.5, duration / 4)
         filters.append(
             f"[{canvas}]"
-            "drawbox=x=(iw-620)/2:y=400:w=620:h=2:color=0xD79A2B@0.88:t=fill,"
+            f"drawbox=x=(iw-{ui(620)})/2:y={ui(400)}:w={ui(620)}:h={ui(2)}:"
+            "color=0xD79A2B@0.88:t=fill,"
             "drawtext=fontfile='C\\:/Windows/Fonts/georgiab.ttf':"
-            f"text='{_escape_drawtext(title)}':fontcolor=0xF2D28B:fontsize=44:"
-            "x=(w-text_w)/2:y=416,"
+            f"text='{_escape_drawtext(title)}':fontcolor=0xF2D28B:fontsize={ui(44)}:"
+            f"x=(w-text_w)/2:y={ui(416)},"
             "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
-            f"text='{_escape_drawtext(subtitle)}':fontcolor=0x8ECDF2:fontsize=20:"
-            "x=(w-text_w)/2:y=478,"
-            "drawbox=x=(iw-420)/2:y=520:w=420:h=2:color=0xD79A2B@0.62:t=fill,"
+            f"text='{_escape_drawtext(subtitle)}':fontcolor=0x8ECDF2:fontsize={ui(20)}:"
+            f"x=(w-text_w)/2:y={ui(478)},"
+            f"drawbox=x=(iw-{ui(420)})/2:y={ui(520)}:w={ui(420)}:h={ui(2)}:"
+            "color=0xD79A2B@0.62:t=fill,"
             f"fade=t=in:st=0:d={fade:.3f},"
             f"fade=t=out:st={max(0.0, duration - fade):.6f}:d={fade:.3f},"
             f"format=yuv420p[{output}]"
@@ -336,6 +352,96 @@ def build_preview_command(
     return command
 
 
+def build_final_command(
+    timeline: TimelineDocument,
+    filter_script: Path,
+    destination: Path,
+    *,
+    codec: str,
+    constant_qp: int,
+    preset: str,
+    audio_bitrate: str,
+    music: MusicTrack | None,
+    hardware_encoding: bool,
+    watermark: Path | None = None,
+) -> list[str]:
+    if codec.casefold() != "h264":
+        raise FinalRenderError("The approved-master renderer currently supports only H.264")
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-i", str(timeline.source)]
+    if music is not None:
+        command.extend(["-stream_loop", "-1", "-i", str(music.local_file)])
+    if watermark is not None:
+        if watermark.suffix.casefold() == ".gif":
+            command.extend(["-stream_loop", "-1", "-ignore_loop", "1", "-i", str(watermark)])
+        else:
+            command.extend(["-loop", "1", "-i", str(watermark)])
+    command.extend(
+        [
+            "-/filter_complex",
+            str(filter_script),
+            "-map",
+            "[vout]",
+            "-map",
+            "[aout]",
+        ]
+    )
+    if hardware_encoding:
+        command.extend(
+            [
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                preset,
+                "-tune",
+                "hq",
+                "-rc",
+                "constqp",
+                "-qp",
+                str(constant_qp),
+                "-profile:v",
+                "high",
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-preset",
+                "slow",
+                "-crf",
+                str(constant_qp),
+                "-profile:v",
+                "high",
+            ]
+        )
+    command.extend(
+        [
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-movflags",
+            "+faststart",
+            "-metadata",
+            "title=Pizza Warriors - Icecrown Citadel",
+            "-metadata",
+            "artist=Pizza Warriors",
+            "-metadata",
+            "comment=Approved local master; generated by WoW Raid Video Editor",
+            "-y",
+            str(destination),
+        ]
+    )
+    return command
+
+
 def _bitrate_bits_per_second(value: str) -> int:
     match = re.fullmatch(r"(\d+(?:\.\d+)?)([kKmM]?)", value.strip())
     if not match:
@@ -426,6 +532,117 @@ def render_preview(
         {
             "signature": signature,
             "review_only": True,
+            "timeline_duration_seconds": timeline.duration_seconds,
+            "output_duration_seconds": output_duration,
+            "presentation": presentation.model_dump(mode="json") if presentation else None,
+            "music_track_id": music.id if music else None,
+        },
+    )
+    return command
+
+
+def render_final(
+    timeline: TimelineDocument,
+    destination: Path,
+    *,
+    resolution: str,
+    fps: int,
+    codec: str,
+    constant_qp: int,
+    preset: str,
+    audio_bitrate: str,
+    transition_seconds: float,
+    music: MusicTrack | None = None,
+    hardware_encoding: bool = True,
+    watermark: WatermarkConfig | None = None,
+    presentation: PresentationConfig | None = None,
+    approved: bool = False,
+    dry_run: bool = False,
+) -> list[str]:
+    if not approved and not dry_run:
+        raise FinalRenderError(
+            "Final rendering requires explicit approval; rerun with --approved after reviewing "
+            "the complete preview"
+        )
+    width_text, height_text = resolution.split("x", maxsplit=1)
+    width, height = int(width_text), int(height_text)
+    ensure_directory(destination.parent)
+    filter_script = destination.with_suffix(".filters.txt")
+    graph = build_filter_graph(
+        timeline,
+        width=width,
+        height=height,
+        fps=fps,
+        transition_seconds=transition_seconds,
+        music=music,
+        watermark=watermark,
+        presentation=presentation,
+    )
+    atomic_write_text(filter_script, graph)
+    temporary = destination.with_name(f"{destination.stem}.rendering{destination.suffix}")
+    command = build_final_command(
+        timeline,
+        filter_script,
+        temporary,
+        codec=codec,
+        constant_qp=constant_qp,
+        preset=preset,
+        audio_bitrate=audio_bitrate,
+        music=music,
+        hardware_encoding=hardware_encoding,
+        watermark=watermark.image if watermark is not None else None,
+    )
+    signature = hashlib.sha256(
+        (
+            timeline_digest(timeline)
+            + graph
+            + json.dumps(command, ensure_ascii=False)
+            + (music.sha256 if music else "")
+            + (
+                hashlib.sha256(watermark.image.read_bytes()).hexdigest()
+                if watermark is not None
+                else ""
+            )
+        ).encode()
+    ).hexdigest()
+    manifest = destination.with_suffix(".manifest.json")
+    if destination.is_file() and manifest.is_file():
+        try:
+            if json.loads(manifest.read_text(encoding="utf-8")).get("signature") == signature:
+                return command
+        except (OSError, json.JSONDecodeError):
+            pass
+        raise FinalRenderError(
+            f"A different final master already exists at {destination}; move it before rerendering"
+        )
+    intro_seconds = presentation.intro_seconds if presentation is not None else 0.0
+    outro_seconds = presentation.outro_seconds if presentation is not None else 0.0
+    output_duration = timeline.duration_seconds + intro_seconds + outro_seconds
+    estimated_bytes = (60_000_000 + _bitrate_bits_per_second(audio_bitrate)) * output_duration / 8
+    free_bytes = shutil.disk_usage(destination.parent).free
+    if free_bytes < estimated_bytes * 1.5:
+        raise FinalRenderError(
+            f"Insufficient free space: need about {estimated_bytes * 1.5 / 1e9:.2f} GB"
+        )
+    if dry_run:
+        return command
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as exc:
+        raise FinalRenderError("ffmpeg is not installed or not on PATH") from exc
+    except subprocess.CalledProcessError as exc:
+        raise FinalRenderError(f"Final render failed with exit code {exc.returncode}") from exc
+    temporary.replace(destination)
+    atomic_write_json(
+        manifest,
+        {
+            "signature": signature,
+            "approved": True,
+            "resolution": resolution,
+            "fps": fps,
+            "codec": codec,
+            "constant_qp": constant_qp,
+            "audio_bitrate": audio_bitrate,
             "timeline_duration_seconds": timeline.duration_seconds,
             "output_duration_seconds": output_duration,
             "presentation": presentation.model_dump(mode="json") if presentation else None,

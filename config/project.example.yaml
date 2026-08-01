@@ -55,3 +55,6 @@ final:
   fps: "source"
   codec: "h264"
   hardware_encoding: true
+  constant_qp: 18
+  preset: "p6"
+  audio_bitrate: "320k"

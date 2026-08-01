@@ -1,15 +1,16 @@
 # WoW Raid Video Editor
 
 WoW Raid Video Editor is a local, review-first Python 3.12 CLI for condensing one
-long OBS raid recording into pull-focused review media. It inspects the recording
+long OBS raid recording into pull-focused review media and approved local masters. It inspects the recording
 with FFprobe, keeps explicitly selected game and Discord audio, excludes a
 separately recorded microphone stream, derives pull candidates from local raid
 evidence, exports a neutral timeline and FCPXML, and renders a low-resolution
-preview with FFmpeg.
+preview with FFmpeg, then permits a final-quality render only after an explicit
+approval flag.
 
-The MVP does **not** modify source media, create a final-quality render, upload a
-video, or publish anything. Human review is required before timeline generation
-and again before any later manual finishing work in an editor.
+The application does **not** modify source media, upload a video, or publish
+anything. Human review is required before final rendering, and the final command
+refuses to run without `--approved`.
 
 ## Current workstation status
 
@@ -144,9 +145,17 @@ uv run raid-editor validate config\my-raid.local.yaml
 ```
 
 Watch the complete preview and read the reports before manually importing the
-FCPXML into Resolve. There is no machine-enforced approval record: the operator
-is responsible for not running `build-timeline` or `render-preview` until the
-review is accepted.
+FCPXML into Resolve. Preview creation remains an operator review boundary; final
+rendering adds a machine-enforced approval flag and records it in the manifest.
+
+After watching and approving the complete preview, create the local final master:
+
+```powershell
+uv run raid-editor render-final config\my-raid.local.yaml --approved
+```
+
+This command records approval in the final manifest, renders to `final\`, validates
+the output, and performs no upload or publishing action.
 
 ## Commands
 
@@ -158,6 +167,7 @@ review is accepted.
 | `build-timeline CONFIG` | Writes timeline JSON, SRT labels, chapters, FCPXML, Resolve payload, and the microphone-free MOV sidecar. |
 | `create-resolve-project CONFIG` | Attempts unique-project creation through the Python 3.13 Resolve bridge. Use `--dry-run` first. |
 | `render-preview CONFIG` | Renders only the configured review MP4. Use `--dry-run` to prepare artifacts without starting the MP4 render. |
+| `render-final CONFIG --approved` | Renders and validates the approved local master. The approval flag is mandatory; no upload occurs. |
 | `validate CONFIG` | Rebuilds required artifacts, checks source metadata, pull bounds, microphone-stream count, and preview readability. |
 | `wizard [CONFIG]` | Runs the guided setup or reopens the guided review for an existing project. |
 
@@ -232,6 +242,9 @@ final:
   fps: "source"
   codec: "h264"
   hardware_encoding: true
+  constant_qp: 18
+  preset: "p6"
+  audio_bitrate: "320k"
 ```
 
 Audio numbers are absolute FFprobe stream indexes, not OBS track labels or
@@ -246,9 +259,10 @@ damage activity as lower-confidence `unknown` pulls. An optional
 `skada_export` can add timestamped boss segments and outcomes without executing
 the Lua file. These fallbacks still require manual review.
 
-The `details_export`, `preview.hardware_encoding`, and entire `final` section
-are reserved placeholders in this MVP. The preview renderer currently uses
-software `libx264`; no final-render command consumes `final`.
+The `final` section controls the explicitly approved local master. With hardware
+encoding enabled, H.264 NVENC uses constant-QP quality; the default QP 18 is a
+high-quality archival/upload master. The preview and final commands share the
+same deterministic timeline, titles, watermark, presentation cards, and audio map.
 
 ## Generated output
 
@@ -260,6 +274,7 @@ review\            local HTML, audio samples, thumbnails, short clips
 timeline\          timeline.json, timeline.fcpxml, pull-labels.srt
 generated-assets\  source-microphone-free.mov and its manifest
 preview\           review MP4, FFmpeg filter script, manifest
+final\             approved local master, FFmpeg filter script, manifest
 reports\           chapters, uncertainty, music, audio, edit, validation
 resolve\           create-project.json bridge payload
 ```
@@ -293,7 +308,7 @@ guarded PowerShell example and the list of files that live outside `output`.
 - The browser review downloads files but does not apply them.
 - Only the first approved music ID is mixed into the preview. Music is not added
   to FCPXML or the Resolve project.
-- The preview is not a final master and is not persistently watermarked.
+- The preview is not a final master; final rendering requires `--approved`.
 - Synthetic H.264 FCPXML/Resolve import is proven on this host. Import of the
   current real MOV/HEVC sidecar remains unproven.
 - The API bridge may require Resolve Studio. It refuses to modify an existing

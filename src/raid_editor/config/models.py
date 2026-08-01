@@ -140,6 +140,30 @@ class FinalConfig(StrictModel):
     fps: str | int = "source"
     codec: str = "h264"
     hardware_encoding: bool = True
+    constant_qp: int = Field(default=18, ge=0, le=51)
+    preset: str = "p6"
+    audio_bitrate: str = "320k"
+
+    @field_validator("resolution")
+    @classmethod
+    def resolution_must_be_source_or_dimensions(cls, value: str) -> str:
+        if value.casefold() == "source":
+            return "source"
+        parts = value.lower().split("x")
+        if len(parts) != 2 or not all(part.isdigit() and int(part) > 0 for part in parts):
+            raise ValueError("final resolution must be source or WIDTHxHEIGHT")
+        return value.lower()
+
+    @field_validator("fps")
+    @classmethod
+    def fps_must_be_source_or_positive(cls, value: str | int) -> str | int:
+        if isinstance(value, str):
+            if value.casefold() != "source":
+                raise ValueError("final fps must be source or a positive integer")
+            return "source"
+        if value <= 0 or value > 120:
+            raise ValueError("final fps must be source or a positive integer up to 120")
+        return value
 
 
 class ProjectConfig(StrictModel):

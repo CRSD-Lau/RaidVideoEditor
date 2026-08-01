@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from raid_editor.audio.tracks import infer_track_roles, validate_audio_mapping
 from raid_editor.config.loader import load_project_config
-from raid_editor.config.models import AudioConfig, PreviewConfig, ProjectConfig
+from raid_editor.config.models import AudioConfig, FinalConfig, PreviewConfig, ProjectConfig
 from raid_editor.ingestion.probe import AudioStream, MediaProbe
 
 
@@ -99,6 +99,21 @@ def test_preview_config_rejects_malformed_dimensions(value: str) -> None:
     # Arrange / Act / Assert
     with pytest.raises(ValidationError, match="resolution must use WIDTHxHEIGHT"):
         PreviewConfig(resolution=value)
+
+
+def test_final_config_accepts_source_geometry_and_high_quality_defaults() -> None:
+    config = FinalConfig()
+
+    assert config.resolution == "source"
+    assert config.fps == "source"
+    assert config.constant_qp == 18
+    assert config.audio_bitrate == "320k"
+
+
+@pytest.mark.parametrize("value", ["wide", "0x1440", "2560-by-1440"])
+def test_final_config_rejects_malformed_dimensions(value: str) -> None:
+    with pytest.raises(ValidationError, match="final resolution must be source or WIDTHxHEIGHT"):
+        FinalConfig(resolution=value)
 
 
 def test_load_project_config_resolves_paths_from_the_yaml_directory(

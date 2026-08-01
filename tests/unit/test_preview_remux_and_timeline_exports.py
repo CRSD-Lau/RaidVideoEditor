@@ -11,7 +11,13 @@ from raid_editor.audio.tracks import AudioMappingError, create_mic_free_remux
 from raid_editor.config.models import PresentationConfig, WatermarkConfig
 from raid_editor.ingestion.probe import AudioStream, MediaProbe
 from raid_editor.models import TimelineClip, TimelineDocument
-from raid_editor.rendering.preview import build_filter_graph, build_preview_command
+from raid_editor.rendering.preview import (
+    FinalRenderError,
+    build_filter_graph,
+    build_final_command,
+    build_preview_command,
+    render_final,
+)
 from raid_editor.timeline.export import (
     write_chapters,
     write_fcpxml,
@@ -224,6 +230,73 @@ def test_preview_graph_adds_branded_intro_outro_and_boss_titles(tmp_path: Path) 
     assert "concat=n=3:v=1:a=0" in graph
     assert graph.count("anullsrc=r=48000:cl=stereo") == 2
     assert "concat=n=3:v=0:a=1[aout]" in graph
+
+
+def test_branded_graph_scales_title_geometry_for_1440p(tmp_path: Path) -> None:
+    logo = tmp_path / "pizza-warriors.gif"
+    logo.write_bytes(b"animated image placeholder")
+
+    graph = build_filter_graph(
+        _timeline(tmp_path / "source.mkv"),
+        width=2560,
+        height=1440,
+        fps=60,
+        transition_seconds=0.2,
+        music=None,
+        watermark=WatermarkConfig(
+            image=logo,
+            x_fraction=0,
+            y_fraction=0.75,
+            width_fraction=0.25,
+            height_fraction=0.25,
+        ),
+        presentation=PresentationConfig(),
+    )
+
+    assert "drawbox=x=48:y=36:w=1408:h=188" in graph
+    assert "fontcolor=0xF2D28B:fontsize=64:x=96:y=56" in graph
+    assert "drawbox=x=(iw-1240)/2:y=800:w=1240:h=4" in graph
+    assert "fontcolor=0xF2D28B:fontsize=88" in graph
+
+
+def test_final_command_uses_constant_quality_and_never_uploads(tmp_path: Path) -> None:
+    logo = tmp_path / "pizza-warriors.gif"
+    logo.write_bytes(b"animated image placeholder")
+
+    command = build_final_command(
+        _timeline(tmp_path / "source.mkv"),
+        tmp_path / "final.filters.txt",
+        tmp_path / "final.rendering.mp4",
+        codec="h264",
+        constant_qp=18,
+        preset="p6",
+        audio_bitrate="320k",
+        music=None,
+        hardware_encoding=True,
+        watermark=logo,
+    )
+
+    assert command[command.index("-c:v") + 1] == "h264_nvenc"
+    assert command[command.index("-rc") + 1] == "constqp"
+    assert command[command.index("-qp") + 1] == "18"
+    assert command[command.index("-b:a") + 1] == "320k"
+    assert "-stream_loop" in command
+    assert not any("upload" in argument.casefold() for argument in command)
+
+
+def test_final_render_requires_explicit_approval(tmp_path: Path) -> None:
+    with pytest.raises(FinalRenderError, match="requires explicit approval"):
+        render_final(
+            _timeline(tmp_path / "source.mkv"),
+            tmp_path / "final.mp4",
+            resolution="2560x1440",
+            fps=60,
+            codec="h264",
+            constant_qp=18,
+            preset="p6",
+            audio_bitrate="320k",
+            transition_seconds=0.2,
+        )
 
 
 def test_mic_free_remux_maps_retained_streams_and_never_changes_source(
