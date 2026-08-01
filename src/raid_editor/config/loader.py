@@ -52,7 +52,22 @@ def load_project_config(path: Path) -> ProjectConfig:
     normalized_music = config.music.model_copy(
         update={"library": _absolute(base, config.music.library)}
     )
-    return config.model_copy(update={"input": normalized_input, "music": normalized_music})
+    normalized_preview = config.preview
+    if config.preview.watermark is not None:
+        normalized_preview = config.preview.model_copy(
+            update={
+                "watermark": config.preview.watermark.model_copy(
+                    update={"image": _absolute(base, config.preview.watermark.image)}
+                )
+            }
+        )
+    return config.model_copy(
+        update={
+            "input": normalized_input,
+            "music": normalized_music,
+            "preview": normalized_preview,
+        }
+    )
 
 
 def project_slug(config: ProjectConfig) -> str:

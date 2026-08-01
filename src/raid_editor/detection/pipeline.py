@@ -262,7 +262,7 @@ def detect_from_combat_log(
                 title = f"{segment.mob_name} — Attempt {attempt_number} (Wipe)"
                 notes = ""
             else:
-                skada_type = "boss_attempt"
+                skada_type = "unknown"
                 skada_result = "unknown"
                 confidence = 0.82
                 include = True

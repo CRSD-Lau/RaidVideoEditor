@@ -70,8 +70,14 @@ def write_edit_summary(
     confidence_threshold: float,
     destination: Path,
 ) -> None:
-    counts = Counter(pull.type for pull in pulls if pull.include)
-    uncertain = [pull for pull in pulls if pull.confidence < confidence_threshold]
+    timeline_pull_ids = {
+        pull_id for clip in timeline.clips for pull_id in clip.pull_ids
+    }
+    included_pulls = [pull for pull in pulls if pull.id in timeline_pull_ids]
+    counts = Counter(pull.type for pull in included_pulls)
+    uncertain = [
+        pull for pull in included_pulls if pull.confidence < confidence_threshold
+    ]
     removed = max(0.0, probe.duration_seconds - timeline.duration_seconds)
     lines = [
         "# Edit Summary",

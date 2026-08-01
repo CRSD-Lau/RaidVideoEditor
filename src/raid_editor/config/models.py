@@ -92,11 +92,28 @@ class MusicConfig(StrictModel):
     approved_track_ids: list[str] = Field(default_factory=list)
 
 
+class WatermarkConfig(StrictModel):
+    image: Path
+    x_fraction: float = Field(default=0.0, ge=0, le=1)
+    y_fraction: float = Field(default=0.0, ge=0, le=1)
+    width_fraction: float = Field(gt=0, le=1)
+    height_fraction: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def must_fit_inside_frame(self) -> WatermarkConfig:
+        if self.x_fraction + self.width_fraction > 1:
+            raise ValueError("watermark x_fraction + width_fraction must not exceed 1")
+        if self.y_fraction + self.height_fraction > 1:
+            raise ValueError("watermark y_fraction + height_fraction must not exceed 1")
+        return self
+
+
 class PreviewConfig(StrictModel):
     resolution: str = "1280x720"
     fps: int = Field(default=30, gt=0, le=120)
     bitrate: str = "4M"
     hardware_encoding: bool = False
+    watermark: WatermarkConfig | None = None
 
     @field_validator("resolution")
     @classmethod

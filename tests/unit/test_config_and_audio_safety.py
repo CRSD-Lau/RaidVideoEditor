@@ -124,6 +124,26 @@ def test_load_project_config_resolves_paths_from_the_yaml_directory(
     assert config.music.library == (config_dir / "music/library.json").resolve()
 
 
+def test_load_project_config_resolves_preview_watermark_path(tmp_path: Path) -> None:
+    payload = _project_payload()
+    payload["preview"] = {
+        "watermark": {
+            "image": "assets/camera-cover.png",
+            "x_fraction": 0,
+            "y_fraction": 0.74,
+            "width_fraction": 0.26,
+            "height_fraction": 0.26,
+        }
+    }
+    config_path = tmp_path / "project.yaml"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    config = load_project_config(config_path)
+
+    assert config.preview.watermark is not None
+    assert config.preview.watermark.image == (tmp_path / "assets/camera-cover.png").resolve()
+
+
 def test_infer_track_roles_uses_absolute_stream_indexes_from_titles() -> None:
     # Arrange
     streams = [

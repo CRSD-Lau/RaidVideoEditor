@@ -8,6 +8,7 @@ import pytest
 
 import raid_editor.audio.tracks as audio_tracks
 from raid_editor.audio.tracks import AudioMappingError, create_mic_free_remux
+from raid_editor.config.models import WatermarkConfig
 from raid_editor.ingestion.probe import AudioStream, MediaProbe
 from raid_editor.models import TimelineClip, TimelineDocument
 from raid_editor.rendering.preview import build_filter_graph, build_preview_command
@@ -127,6 +128,41 @@ def test_preview_command_can_use_nvenc_for_a_configured_review(tmp_path: Path) -
     )
 
     assert command[command.index("-c:v") + 1] == "h264_nvenc"
+
+
+def test_preview_graph_and_command_overlay_a_camera_cover(tmp_path: Path) -> None:
+    cover = tmp_path / "camera-cover.png"
+    cover.write_bytes(b"image placeholder")
+    watermark = WatermarkConfig(
+        image=cover,
+        x_fraction=0,
+        y_fraction=0.75,
+        width_fraction=0.25,
+        height_fraction=0.25,
+    )
+
+    graph = build_filter_graph(
+        _timeline(tmp_path / "source.mkv"),
+        width=1280,
+        height=720,
+        fps=30,
+        transition_seconds=0.2,
+        music=None,
+        watermark=watermark,
+    )
+    command = build_preview_command(
+        _timeline(tmp_path / "source.mkv"),
+        tmp_path / "review.filters.txt",
+        tmp_path / "review.mp4",
+        bitrate="4M",
+        music=None,
+        watermark=cover,
+    )
+
+    assert "scale=320:180" in graph
+    assert "overlay=x=0:y=540" in graph
+    assert command[command.index("-loop") + 1] == "1"
+    assert str(cover) in command
 
 
 def test_mic_free_remux_maps_retained_streams_and_never_changes_source(

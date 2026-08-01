@@ -56,7 +56,7 @@ from raid_editor.util.paths import (
 )
 
 _PULL_LIST = TypeAdapter(list[PullCandidate])
-_ANALYSIS_SCHEMA_VERSION = 2
+_ANALYSIS_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -310,6 +310,7 @@ def render_preview_project(
         transition_seconds=config.editing.transition_duration_seconds,
         music=music[0] if music else None,
         hardware_encoding=config.preview.hardware_encoding,
+        watermark=config.preview.watermark,
         dry_run=dry_run,
     )
     retained_names = [

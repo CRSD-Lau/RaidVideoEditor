@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from raid_editor.config.models import WatermarkConfig
 from raid_editor.models import TimelineDocument
 from raid_editor.music.library import MusicTrack
 from raid_editor.timeline.export import timeline_digest
@@ -32,6 +33,7 @@ def build_filter_graph(
     fps: int,
     transition_seconds: float,
     music: MusicTrack | None,
+    watermark: WatermarkConfig | None = None,
 ) -> str:
     if not timeline.clips:
         raise PreviewRenderError("Timeline has no included clips")
@@ -60,9 +62,26 @@ def build_filter_graph(
             )
         filters.append(f"{video_filter}[{label}]")
         video_labels.append(f"[{label}]")
+    video_output = "vbase" if watermark is not None else "vout"
     filters.append(
-        "".join(video_labels) + f"concat=n={len(video_labels)}:v=1:a=0,format=yuv420p[vout]"
+        "".join(video_labels)
+        + f"concat=n={len(video_labels)}:v=1:a=0,format=yuv420p[{video_output}]"
     )
+    if watermark is not None:
+        watermark_input = 1 + int(music is not None)
+        watermark_width = max(1, round(width * watermark.width_fraction))
+        watermark_height = max(1, round(height * watermark.height_fraction))
+        watermark_x = round(width * watermark.x_fraction)
+        watermark_y = round(height * watermark.y_fraction)
+        filters.append(
+            f"[{watermark_input}:v:0]scale={watermark_width}:{watermark_height}:"
+            "force_original_aspect_ratio=decrease,"
+            f"pad={watermark_width}:{watermark_height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            "setsar=1[watermark]"
+        )
+        filters.append(
+            f"[vbase][watermark]overlay=x={watermark_x}:y={watermark_y}:shortest=1[vout]"
+        )
 
     track_outputs: list[str] = []
     for track_number, stream_index in enumerate(timeline.retained_audio_stream_indexes):
@@ -119,10 +138,13 @@ def build_preview_command(
     bitrate: str,
     music: MusicTrack | None,
     hardware_encoding: bool = False,
+    watermark: Path | None = None,
 ) -> list[str]:
     command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-i", str(timeline.source)]
     if music is not None:
         command.extend(["-stream_loop", "-1", "-i", str(music.local_file)])
+    if watermark is not None:
+        command.extend(["-loop", "1", "-i", str(watermark)])
     command.extend(
         [
             "-/filter_complex",
@@ -193,6 +215,7 @@ def render_preview(
     transition_seconds: float,
     music: MusicTrack | None = None,
     hardware_encoding: bool = False,
+    watermark: WatermarkConfig | None = None,
     dry_run: bool = False,
 ) -> list[str]:
     width_text, height_text = resolution.split("x", maxsplit=1)
@@ -206,6 +229,7 @@ def render_preview(
         fps=fps,
         transition_seconds=transition_seconds,
         music=music,
+        watermark=watermark,
     )
     atomic_write_text(filter_script, graph)
     command = build_preview_command(
@@ -215,6 +239,7 @@ def render_preview(
         bitrate=bitrate,
         music=music,
         hardware_encoding=hardware_encoding,
+        watermark=watermark.image if watermark is not None else None,
     )
     signature = hashlib.sha256(
         (
@@ -222,6 +247,11 @@ def render_preview(
             + graph
             + json.dumps(command, ensure_ascii=False)
             + (music.sha256 if music else "")
+            + (
+                hashlib.sha256(watermark.image.read_bytes()).hexdigest()
+                if watermark is not None
+                else ""
+            )
         ).encode()
     ).hexdigest()
     manifest = destination.with_suffix(".manifest.json")
