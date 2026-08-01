@@ -17,6 +17,8 @@ def _config(tmp_path: Path) -> ProjectConfig:
         {
             "project": {
                 "name": "Pizza Warriors ICC",
+                "game": "World of Warcraft",
+                "expansion": "Wrath of the Lich King",
                 "raid": "Icecrown Citadel",
                 "raid_date": "2026-07-31",
             },
@@ -37,6 +39,10 @@ def _config(tmp_path: Path) -> ProjectConfig:
                 "token": str(tmp_path / "youtube-token.local.json"),
                 "privacy_status": "private",
                 "tags": ["World of Warcraft", "Pizza Warriors"],
+                "category_name": "Gaming",
+                "game_title": "World of Warcraft",
+                "game_rating": "Unrated",
+                "hashtags": ["#WorldOfWarcraft", "#WotLK", "#IcecrownCitadel"],
             },
         }
     )
@@ -96,18 +102,32 @@ def test_youtube_package_contains_title_chapters_and_private_metadata(
     metadata = json.loads(package.metadata.read_text(encoding="utf-8"))
     chapters = package.chapters.read_text(encoding="utf-8").splitlines()
 
-    assert metadata["title"] == (
-        "Pizza Warriors — Icecrown Citadel Full Raid Clear | July 31, 2026"
-    )
+    assert metadata["title"] == ("Icecrown Citadel Full Raid Clear | Pizza Warriors WoW WotLK")
     assert metadata["privacy_status"] == "private"
     assert metadata["made_for_kids"] is False
+    assert metadata["category_id"] == "20"
+    assert metadata["category_name"] == "Gaming"
+    assert metadata["game_title"] == "World of Warcraft"
+    assert metadata["game_rating"] == "Unrated"
+    assert metadata["hashtags"] == [
+        "#WorldOfWarcraft",
+        "#WotLK",
+        "#IcecrownCitadel",
+    ]
     assert chapters == [
         "00:00 Intro",
         "00:05 Lord Marrowgar",
         "01:05 Lady Deathwhisper",
         "02:35 Outro",
     ]
-    assert "Discord and microphone tracks are excluded" in metadata["description"]
+    assert "Pizza Warriors take on Icecrown Citadel" in metadata["description"]
+    assert "Boss chapters" in metadata["description"]
+    assert "—" not in metadata["title"]
+    assert "—" not in metadata["description"]
+    assert "World of Warcraft" in package.studio_details.read_text(encoding="utf-8")
+    assert "YouTube Data API" in package.root.joinpath("upload-checklist.md").read_text(
+        encoding="utf-8"
+    )
     assert package.thumbnail.read_bytes() == b"jpeg"
 
 
@@ -140,7 +160,7 @@ def test_youtube_package_appends_required_music_attribution(
     metadata = json.loads(package.metadata.read_text(encoding="utf-8"))
 
     assert "Music attribution" in metadata["description"]
-    assert "Example Track — Example Artist (CC BY 4.0)" in metadata["description"]
+    assert "Example Track - Example Artist (CC BY 4.0)" in metadata["description"]
     assert package.root.joinpath("attribution.txt").read_text(encoding="utf-8") == (
         "Example Track — Example Artist (CC BY 4.0)\n"
     )
@@ -202,6 +222,21 @@ def test_changed_metadata_for_uploaded_master_is_blocked_as_a_duplicate(
         youtube_upload.upload_youtube_video(config, package, approved=True)
 
 
+def test_unverified_api_project_refuses_public_upload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path).model_copy(
+        update={
+            "youtube": _config(tmp_path).youtube.model_copy(update={"privacy_status": "public"})
+        }
+    )
+    package = _package(tmp_path, monkeypatch)
+
+    with pytest.raises(YouTubeUploadError, match="not verified for Public uploads"):
+        youtube_upload.upload_youtube_video(config, package, approved=True)
+
+
 def test_successful_upload_sets_private_metadata_and_custom_thumbnail(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -256,6 +291,10 @@ def test_successful_upload_sets_private_metadata_and_custom_thumbnail(
     assert isinstance(body, dict)
     assert body["status"]["privacyStatus"] == "private"
     assert body["status"]["selfDeclaredMadeForKids"] is False
+    assert body["status"]["containsSyntheticMedia"] is False
+    assert body["status"]["license"] == "youtube"
+    assert body["snippet"]["defaultLanguage"] == "en"
+    assert insert["notifySubscribers"] is True
     assert observed["thumbnail_executed"] is True
     assert result.video_id == "fresh123"
     assert result.thumbnail_applied is True

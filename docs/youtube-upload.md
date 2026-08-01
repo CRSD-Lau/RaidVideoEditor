@@ -2,8 +2,10 @@
 
 YouTube delivery is a separate, approval-gated step after the local final master
 passes validation. A dry run never authenticates or transmits the video. An
-approved upload defaults to **Private**, does not notify subscribers, and never
-changes visibility after upload.
+approved API upload defaults to **Private** and never changes visibility after
+upload. A Public post from an unverified API project must use the generated
+package in YouTube Studio because YouTube forces API uploads from those projects
+to Private.
 
 The implementation follows Google's official [Python upload
 guide](https://developers.google.com/youtube/v3/guides/uploading_a_video), uses
@@ -40,18 +42,52 @@ uv run raid-editor upload-youtube config\my-raid.local.yaml --dry-run
 
 Inspect every file in `output\<project>\youtube\`:
 
-- `metadata.json`: exact title, description, tags, category, audience flag, and
-  requested visibility;
+- `metadata.json`: exact title, description, tags, hashtags, category, game,
+  audience flags, and requested visibility;
 - `description.md`: copyable description with YouTube chapters;
 - `chapters.txt`: chapter offsets including presentation intro/outro time;
 - `thumbnail-source.jpg`: 1280x720 JPEG constrained to YouTube's 2 MB limit;
+- `studio-details.md`: the exact Studio-only category, game rating, language,
+  licence, embedding, and end-screen choices;
 - `upload-checklist.md`: human review and processing checks;
 - `video-source.txt`: absolute validated master selected for upload.
 
 Change metadata only in the project YAML, rerun the dry run, and review the
 regenerated package. Do not hand-edit `metadata.json`; it is reproducible output.
 
-## Approved upload
+## Professional post settings
+
+Keep the generated copy direct and human. The title leads with the raid name,
+the description explains what was kept in the edit, and manual boss chapters
+make the full clear easy to navigate. The package allows no more than three
+focused hashtags and rejects em dashes when `forbid_em_dash` is enabled.
+
+For a World of Warcraft raid, use:
+
+```yaml
+youtube:
+  privacy_status: "public"
+  category_id: "20"
+  category_name: "Gaming"
+  game_title: "World of Warcraft"
+  game_rating: "Unrated"
+  hashtags: ["#WorldOfWarcraft", "#WotLK", "#IcecrownCitadel"]
+  default_language: "en"
+  made_for_kids: false
+  age_restricted: false
+  contains_synthetic_media: false
+  license: "youtube"
+  allow_embedding: true
+  notify_subscribers: true
+  api_project_verified_for_public: false
+  forbid_em_dash: true
+```
+
+In Studio, add **Subscribe** and **Best for viewer** over the final five-second
+outro. Wait for Studio's checks before publishing, then verify the public watch
+page. The 1440p version may continue processing after the video becomes public.
+
+## Approved API upload
 
 For the safe default (`privacy_status: private`):
 
@@ -65,20 +101,24 @@ retry/backoff, sets the custom thumbnail when the channel permits it, and writes
 `youtube\upload-manifest.json` plus `reports\youtube-upload.md` with the returned
 video ID and URL.
 
-For deliberate immediate public visibility, both the YAML and command must opt
-in:
+For deliberate immediate public visibility through a Google API project that
+has completed YouTube's compliance audit, all three settings must opt in:
 
 ```yaml
 youtube:
   privacy_status: "public"
+  api_project_verified_for_public: true
 ```
 
 ```powershell
 uv run raid-editor upload-youtube config\my-raid.local.yaml --approved --public-approved
 ```
 
-Prefer Private first. Wait for YouTube's HD/1440p processing, inspect the whole
-video in YouTube Studio, and change visibility there only when ready.
+For an unverified API project, leave
+`api_project_verified_for_public: false`. The command blocks the API upload and
+the package checklist says **Required publishing route: YouTube Studio**. Upload
+the exact file in `video-source.txt`, apply `thumbnail-source.jpg`, copy the
+generated title and description, and set the fields in `studio-details.md`.
 
 ## Duplicate and interruption safety
 

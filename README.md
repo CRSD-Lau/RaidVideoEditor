@@ -166,8 +166,9 @@ uv run raid-editor upload-youtube config\my-raid.local.yaml --dry-run
 ```
 
 Review `youtube\metadata.json`, `description.md`, `chapters.txt`,
-`thumbnail-source.jpg`, and `upload-checklist.md`. After accepting those exact
-values, start the upload:
+`thumbnail-source.jpg`, `studio-details.md`, and `upload-checklist.md`. For a
+Public post from an unverified API project, use those exact files in YouTube
+Studio. For a Private API upload, start the upload with:
 
 ```powershell
 uv run raid-editor upload-youtube config\my-raid.local.yaml --approved
@@ -193,7 +194,7 @@ workflow](docs/youtube-upload.md).
 | `render-preview CONFIG` | Renders only the configured review MP4. Use `--dry-run` to prepare artifacts without starting the MP4 render. |
 | `render-final CONFIG --approved` | Renders and validates the approved local master. The approval flag is mandatory; no upload occurs. |
 | `upload-youtube CONFIG --dry-run` | Generates the title, description, chapters, thumbnail, and checklist without authentication or transmission. |
-| `upload-youtube CONFIG --approved` | Hashes and resumably uploads the validated master. Visibility defaults to Private; Public also requires `--public-approved`. |
+| `upload-youtube CONFIG --approved` | Hashes and resumably uploads the validated master. Visibility defaults to Private. Public API uploads require `--public-approved` and a verified API project; otherwise use Studio. |
 | `validate CONFIG` | Rebuilds required artifacts, checks source metadata, pull bounds, microphone-stream count, and preview readability. |
 | `wizard [CONFIG]` | Runs the guided setup or reopens the guided review for an existing project. |
 
@@ -279,10 +280,22 @@ youtube:
   token: "../secrets/youtube-token.local.json"
   privacy_status: "private"
   category_id: "20"
+  category_name: "Gaming"
+  game_title: "World of Warcraft"
+  game_rating: "Unrated"
   title: null
   description: null
   tags: []
+  hashtags: ["#WorldOfWarcraft", "#WotLK", "#IcecrownCitadel"]
+  default_language: "en"
   made_for_kids: false
+  age_restricted: false
+  contains_synthetic_media: false
+  license: "youtube"
+  allow_embedding: true
+  notify_subscribers: true
+  api_project_verified_for_public: false
+  forbid_em_dash: true
   chunk_size_mib: 16
 ```
 
@@ -304,8 +317,10 @@ high-quality archival/upload master. The preview and final commands share the
 same deterministic timeline, titles, watermark, presentation cards, and audio map.
 
 Set `youtube.enabled: true` only after creating a Google OAuth **Desktop app**
-client. Keep `privacy_status: private` for the first upload. The upload command
-will not accept `public` without the additional `--public-approved` flag.
+client. Keep `privacy_status: private` for API uploads unless the Google project
+has completed YouTube's required audit. Public API uploads require both
+`api_project_verified_for_public: true` and `--public-approved`; otherwise the
+generated checklist routes the Public post through YouTube Studio.
 
 ## Generated output
 

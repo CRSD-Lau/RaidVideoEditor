@@ -65,8 +65,23 @@ youtube:
   token: null
   privacy_status: "private"
   category_id: "20"
+  category_name: "Gaming"
+  game_title: "World of Warcraft"
+  game_rating: "Unrated"
   title: null
   description: null
   tags: []
+  hashtags:
+    - "#WorldOfWarcraft"
+    - "#WotLK"
+    - "#IcecrownCitadel"
+  default_language: "en"
   made_for_kids: false
+  age_restricted: false
+  contains_synthetic_media: false
+  license: "youtube"
+  allow_embedding: true
+  notify_subscribers: true
+  api_project_verified_for_public: false
+  forbid_em_dash: true
   chunk_size_mib: 16

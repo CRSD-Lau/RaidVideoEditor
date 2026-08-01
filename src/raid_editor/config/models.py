@@ -173,16 +173,53 @@ class YouTubeConfig(StrictModel):
     token: Path | None = None
     privacy_status: Literal["private", "unlisted", "public"] = "private"
     category_id: str = "20"
+    category_name: str = Field(default="Gaming", max_length=100)
+    game_title: str | None = Field(default=None, max_length=150)
+    game_rating: str | None = Field(default=None, max_length=100)
     title: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=5000)
     tags: list[str] = Field(default_factory=list)
+    hashtags: list[str] = Field(default_factory=list, max_length=3)
+    default_language: str = Field(default="en", min_length=2, max_length=20)
     made_for_kids: bool = False
+    age_restricted: bool = False
+    contains_synthetic_media: bool = False
+    license: Literal["youtube", "creativeCommon"] = "youtube"
+    allow_embedding: bool = True
+    notify_subscribers: bool = True
+    api_project_verified_for_public: bool = False
+    forbid_em_dash: bool = True
     chunk_size_mib: int = Field(default=16, ge=1, le=256)
 
+    @field_validator("hashtags")
+    @classmethod
+    def hashtags_must_be_compact_and_prefixed(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for hashtag in value:
+            compact = hashtag.strip()
+            if not compact.startswith("#") or any(character.isspace() for character in compact):
+                raise ValueError("YouTube hashtags must start with # and contain no spaces")
+            normalized.append(compact)
+        return normalized
+
     @model_validator(mode="after")
-    def enabled_upload_requires_local_credentials(self) -> YouTubeConfig:
+    def validate_youtube_workflow(self) -> YouTubeConfig:
         if self.enabled and (self.client_secrets is None or self.token is None):
             raise ValueError("enabled YouTube uploads require client_secrets and token paths")
+        if self.game_title is not None and self.category_id != "20":
+            raise ValueError("a YouTube game title requires the Gaming category ID 20")
+        if self.forbid_em_dash:
+            copy_values = [
+                self.title,
+                self.description,
+                self.category_name,
+                self.game_title,
+                self.game_rating,
+                *self.tags,
+                *self.hashtags,
+            ]
+            if any(value is not None and "—" in value for value in copy_values):
+                raise ValueError("YouTube copy must not contain an em dash")
         return self
 
 

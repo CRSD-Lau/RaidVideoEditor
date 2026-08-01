@@ -308,8 +308,10 @@ does not authenticate or upload.
 
 `upload-youtube --dry-run` requires a passed final-validation report and writes
 the exact metadata, chapters, thumbnail, and checklist without authentication.
-Actual transmission requires `--approved`; Public also requires
-`--public-approved`. The uploader uses a local desktop OAuth token, the
+Actual API transmission requires `--approved`; Public also requires
+`--public-approved` and `api_project_verified_for_public: true`. Unverified API
+projects are deliberately routed through YouTube Studio for Public posts. The
+uploader uses a local desktop OAuth token, the
 `youtube.upload` scope, chunked upload with retry/backoff, a full master SHA-256,
 and a local manifest that prevents re-uploading the same recorded master. It
 applies the generated custom thumbnail when the channel permits it.

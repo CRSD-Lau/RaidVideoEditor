@@ -190,6 +190,22 @@ def test_enabled_youtube_upload_requires_local_credential_paths() -> None:
         ProjectConfig.model_validate(payload)
 
 
+def test_youtube_copy_rejects_em_dash_when_house_style_forbids_it() -> None:
+    payload = _project_payload()
+    payload["youtube"] = {"title": "ICC — Full Clear"}
+
+    with pytest.raises(ValidationError, match="must not contain an em dash"):
+        ProjectConfig.model_validate(payload)
+
+
+def test_youtube_hashtags_must_be_prefixed_and_contain_no_spaces() -> None:
+    payload = _project_payload()
+    payload["youtube"] = {"hashtags": ["World of Warcraft"]}
+
+    with pytest.raises(ValidationError, match="must start with # and contain no spaces"):
+        ProjectConfig.model_validate(payload)
+
+
 def test_infer_track_roles_uses_absolute_stream_indexes_from_titles() -> None:
     # Arrange
     streams = [

@@ -42,6 +42,7 @@ class YouTubePackage:
     description: Path
     chapters: Path
     thumbnail: Path
+    studio_details: Path
     manifest: Path
 
 
@@ -70,11 +71,22 @@ def _display_date(value: date | None) -> str:
     return f"{value:%B} {value.day}, {value.year}"
 
 
+def _youtube_text(value: str) -> str:
+    """Normalize punctuation for the user's plain, human YouTube house style."""
+
+    return value.replace("—", "-").replace("–", "-")
+
+
 def _default_title(config: ProjectConfig) -> str:
     raid = config.project.raid or config.project.name
-    raid_date = _display_date(config.project.raid_date)
-    suffix = f" | {raid_date}" if raid_date else ""
-    return f"Pizza Warriors — {raid} Full Raid Clear{suffix}"[:100]
+    expansion = config.project.expansion
+    if expansion is None:
+        game_terms = "World of Warcraft"
+    elif "wrath" in expansion.casefold():
+        game_terms = "WoW WotLK"
+    else:
+        game_terms = f"WoW {expansion}"
+    return _youtube_text(f"{raid} Full Raid Clear | Pizza Warriors {game_terms}")[:100]
 
 
 def _chapter_lines(config: ProjectConfig, timeline: TimelineDocument) -> list[str]:
@@ -86,7 +98,7 @@ def _chapter_lines(config: ProjectConfig, timeline: TimelineDocument) -> list[st
     rows: list[tuple[float, str]] = []
     if intro > 0:
         rows.append((0.0, "Intro"))
-    rows.extend((intro + clip.timeline_in, clip.label) for clip in timeline.clips)
+    rows.extend((intro + clip.timeline_in, _youtube_text(clip.label)) for clip in timeline.clips)
     outro = (
         config.preview.presentation.outro_seconds
         if config.preview.presentation is not None
@@ -99,20 +111,31 @@ def _chapter_lines(config: ProjectConfig, timeline: TimelineDocument) -> list[st
 
 def _default_description(config: ProjectConfig, chapters: list[str]) -> str:
     raid = config.project.raid or "the raid"
+    game = config.project.game or config.youtube.game_title or "World of Warcraft"
+    expansion = config.project.expansion
+    game_line = f"{game}: {expansion}" if expansion else game
     raid_date = _display_date(config.project.raid_date)
-    date_line = f"Recorded {raid_date}." if raid_date else ""
+    hashtags = " ".join(config.youtube.hashtags)
     lines = [
-        f"Pizza Warriors clear {raid} with the winning boss takes in chronological order.",
-        date_line,
+        f"Pizza Warriors take on {raid} in {game_line}, with every winning boss pull "
+        "from our raid night.",
         "",
-        "Chapters",
+        "This full clear keeps the clean kills and cuts the wipes and long resets, "
+        "so you can watch the run from start to finish without the downtime.",
+        "",
+        "Thanks for watching. Subscribe for more Pizza Warriors Friday raid nights, "
+        "full boss clears, and World of Warcraft videos.",
+        "",
+        "Boss chapters",
         *chapters,
         "",
-        "Final edit uses game audio only; Discord and microphone tracks are excluded.",
+        f"Recorded: {raid_date}" if raid_date else "",
+        f"Game: {config.youtube.game_title or game}",
+        f"Raid: {raid}",
         "",
-        "#WorldofWarcraft #WrathoftheLichKing #IcecrownCitadel",
+        hashtags,
     ]
-    return "\n".join(lines).strip()
+    return _youtube_text("\n".join(lines).strip())
 
 
 def _create_thumbnail(video: Path, destination: Path) -> None:
@@ -164,8 +187,10 @@ def write_youtube_package(
         raise YouTubeUploadError(f"Approved final master does not exist: {video}")
     root = ensure_directory(destination)
     chapters = _chapter_lines(config, timeline)
-    title = config.youtube.title or _default_title(config)
-    description = config.youtube.description or _default_description(config, chapters)
+    title = _youtube_text(config.youtube.title or _default_title(config))
+    description = _youtube_text(
+        config.youtube.description or _default_description(config, chapters)
+    )
     attribution_report = destination.parent / "reports" / "youtube-attribution.txt"
     attribution = (
         attribution_report.read_text(encoding="utf-8").strip()
@@ -173,7 +198,7 @@ def write_youtube_package(
         else ""
     )
     if attribution:
-        description = f"{description}\n\nMusic attribution\n{attribution}"
+        description = _youtube_text(f"{description}\n\nMusic attribution\n{attribution}")
     if len(description) > 5000:
         raise YouTubeUploadError(
             "YouTube description exceeds 5,000 characters after required attribution"
@@ -182,14 +207,29 @@ def write_youtube_package(
         "title": title,
         "description": description,
         "tags": config.youtube.tags,
+        "hashtags": config.youtube.hashtags,
         "category_id": config.youtube.category_id,
+        "category_name": config.youtube.category_name,
+        "game_title": config.youtube.game_title,
+        "game_rating": config.youtube.game_rating,
+        "default_language": config.youtube.default_language,
         "privacy_status": config.youtube.privacy_status,
         "made_for_kids": config.youtube.made_for_kids,
+        "age_restricted": config.youtube.age_restricted,
+        "contains_synthetic_media": config.youtube.contains_synthetic_media,
+        "license": config.youtube.license,
+        "allow_embedding": config.youtube.allow_embedding,
+        "notify_subscribers": config.youtube.notify_subscribers,
+        "api_project_verified_for_public": (config.youtube.api_project_verified_for_public),
+        "recording_date": (
+            config.project.raid_date.isoformat() if config.project.raid_date is not None else None
+        ),
     }
     metadata = root / "metadata.json"
     description_path = root / "description.md"
     chapters_path = root / "chapters.txt"
     thumbnail = root / "thumbnail-source.jpg"
+    studio_details = root / "studio-details.md"
     manifest = root / "upload-manifest.json"
     atomic_write_json(metadata, metadata_payload)
     atomic_write_text(description_path, description + "\n")
@@ -198,12 +238,37 @@ def write_youtube_package(
         root / "title-options.md",
         "# YouTube Title\n\n"
         f"1. {title}\n"
-        f"2. Pizza Warriors ICC Full Clear — {_display_date(config.project.raid_date)}\n",
+        "2. Pizza Warriors Clear Icecrown Citadel | Full WoW WotLK Raid\n"
+        "3. Full ICC Raid Clear | Pizza Warriors World of Warcraft\n",
     )
     atomic_write_text(root / "video-source.txt", str(video.resolve()) + "\n")
     atomic_write_text(
         root / "attribution.txt",
         (attribution + "\n") if attribution else "No third-party music is used in this edit.\n",
+    )
+    atomic_write_text(
+        studio_details,
+        "# YouTube Studio Details\n\n"
+        f"- Visibility: {config.youtube.privacy_status.title()}\n"
+        f"- Category: {config.youtube.category_name} ({config.youtube.category_id})\n"
+        f"- Game title: {config.youtube.game_title or 'Not set'}\n"
+        f"- Game rating: {config.youtube.game_rating or 'Not set'}\n"
+        f"- Video language: {config.youtube.default_language}\n"
+        f"- Made for kids: {'Yes' if config.youtube.made_for_kids else 'No'}\n"
+        f"- Age restricted: {'Yes' if config.youtube.age_restricted else 'No'}\n"
+        "- Altered or synthetic content: "
+        f"{'Yes' if config.youtube.contains_synthetic_media else 'No'}\n"
+        f"- License: {config.youtube.license}\n"
+        f"- Allow embedding: {'Yes' if config.youtube.allow_embedding else 'No'}\n"
+        "- Comments: Use channel default\n"
+        "- Chapters: Use the manual boss chapters in the description\n"
+        "- End screen: Add Subscribe plus Best for viewer over the 5-second outro\n",
+    )
+    public_route = (
+        "YouTube Studio"
+        if config.youtube.privacy_status == "public"
+        and not config.youtube.api_project_verified_for_public
+        else "YouTube Data API"
     )
     atomic_write_text(
         root / "upload-checklist.md",
@@ -212,8 +277,15 @@ def write_youtube_package(
         "- [ ] Full source-file hash will be checked immediately before upload\n"
         "- [x] Microphone and Discord tracks excluded\n"
         f"- [x] Requested upload visibility: {config.youtube.privacy_status.title()}\n"
+        f"- [x] Required publishing route: {public_route}\n"
+        f"- [x] Category: {config.youtube.category_name}\n"
+        f"- [x] Game title: {config.youtube.game_title or 'Not set'}\n"
+        f"- [x] Game rating: {config.youtube.game_rating or 'Not set'}\n"
+        "- [x] Human copy contains no em dash\n"
         "- [ ] Review title, description, chapters, and thumbnail\n"
-        "- [ ] Confirm YouTube processing completed before changing visibility\n",
+        "- [ ] Confirm SD checks finish before publishing\n"
+        "- [ ] Confirm 1440p processing completes after publishing\n"
+        "- [ ] Add Subscribe plus Best for viewer to the 5-second outro\n",
     )
     if not thumbnail.is_file():
         _create_thumbnail(video, thumbnail)
@@ -225,6 +297,7 @@ def write_youtube_package(
         description=description_path,
         chapters=chapters_path,
         thumbnail=thumbnail,
+        studio_details=studio_details,
         manifest=manifest,
     )
 
@@ -293,6 +366,14 @@ def upload_youtube_video(
         )
     if not config.youtube.enabled:
         raise YouTubeUploadError("YouTube upload is disabled in the project configuration")
+    if (
+        config.youtube.privacy_status == "public"
+        and not config.youtube.api_project_verified_for_public
+    ):
+        raise YouTubeUploadError(
+            "This Google API project is not verified for Public uploads. Use the generated "
+            "YouTube Studio package so YouTube can publish the video publicly."
+        )
     metadata = json.loads(package.metadata.read_text(encoding="utf-8"))
     source_sha256 = _file_sha256(package.video)
     metadata_sha256 = hashlib.sha256(
@@ -336,18 +417,21 @@ def upload_youtube_video(
     )
     request = youtube.videos().insert(
         part="snippet,status",
-        notifySubscribers=False,
+        notifySubscribers=metadata["notify_subscribers"],
         body={
             "snippet": {
                 "title": metadata["title"],
                 "description": metadata["description"],
                 "tags": metadata["tags"],
                 "categoryId": metadata["category_id"],
+                "defaultLanguage": metadata["default_language"],
             },
             "status": {
                 "privacyStatus": metadata["privacy_status"],
                 "selfDeclaredMadeForKids": metadata["made_for_kids"],
-                "embeddable": True,
+                "containsSyntheticMedia": metadata["contains_synthetic_media"],
+                "license": metadata["license"],
+                "embeddable": metadata["allow_embedding"],
             },
         },
         media_body=media,
