@@ -27,6 +27,7 @@ from raid_editor.workflow import (
     inspect_project,
     render_final_project,
     render_preview_project,
+    upload_youtube_project,
     validate_project_artifacts,
 )
 
@@ -215,6 +216,53 @@ def render_final_command(
         if validation is not None:
             typer.echo(f"Final validation: {str(validation['status']).upper()}")
             typer.echo(f"Report: {paths.reports / 'final-validation.md'}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("upload-youtube")
+def upload_youtube_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm the validated final and generated YouTube metadata are approved.",
+    ),
+    public_approved: bool = typer.Option(
+        False,
+        "--public-approved",
+        help="Separately confirm immediate public publishing when configured as public.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Package and resumably upload the approved final to YouTube."""
+
+    try:
+        config = load_project_config(config_path)
+
+        def show_progress(percent: int) -> None:
+            typer.echo(f"YouTube upload: {percent}%")
+
+        package, result, paths = upload_youtube_project(
+            config,
+            approved=approved,
+            public_approved=public_approved,
+            dry_run=dry_run,
+            progress=show_progress,
+        )
+        typer.echo(f"YouTube package: {package.root}")
+        typer.echo(f"Metadata: {package.metadata}")
+        if result is None:
+            typer.echo("Dry run only; no file was transmitted.")
+        else:
+            typer.echo(f"YouTube video: {result.url}")
+            typer.echo(f"Privacy: {result.privacy_status}")
+            typer.echo(
+                "Custom thumbnail: " + ("applied" if result.thumbnail_applied else "not applied")
+            )
+            if result.thumbnail_error is not None:
+                typer.echo(f"Thumbnail note: {result.thumbnail_error}")
+            typer.echo(f"Report: {paths.reports / 'youtube-upload.md'}")
     except (OSError, ValueError, RuntimeError) as exc:
         _error(exc)
 

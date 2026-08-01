@@ -6,13 +6,16 @@ contain voice, player names, file paths, and licensing evidence.
 
 ## Network and publication boundary
 
-Runtime commands do not implement cloud storage, telemetry, authentication,
-upload, YouTube publishing, or remote music acquisition. Browser-opening
+Normal inspection, analysis, review, timeline, preview, validation, and final
+render commands remain local. They do not implement cloud storage, telemetry,
+authentication, upload, or remote music acquisition. Browser-opening review
 commands open a local `file:` page.
 
-There is no final-render command and no upload command. The Resolve bridge
-payload explicitly forbids adding a render job, starting rendering, or
-uploading.
+`upload-youtube` is the sole network/publication path. Its dry run creates only
+local review artifacts. Transmission requires `--approved`, defaults to Private,
+and requires the additional `--public-approved` flag if the YAML requests Public.
+The Resolve bridge remains isolated from this path and explicitly forbids render
+and upload requests.
 
 The operator can still share files manually or use another application's
 network features. Keep the review workspace outside synchronized folders unless
@@ -54,6 +57,14 @@ timeline, sidecar, report, manifest, payload, and filter files.
 | `resolve\create-project.json` | Absolute sidecar path, clip labels and ranges |
 | `reports\*` | Raid titles, detected encounters, audio names, music/license evidence |
 | `preview\*.mp4` | Condensed gameplay, Discord/raid comms, optional music |
+| `final\*.mp4` | Approved high-quality master selected for upload |
+| `youtube\metadata.json` | Intended title, description, tags, audience, and visibility |
+| `youtube\upload-manifest.json` | Full master hash, metadata hash, YouTube video ID and URL |
+
+OAuth client and token files live under the repository's ignored `secrets\`
+directory, outside the generated output tree. They must never be committed,
+shared, logged, or copied into reports. The application requests only the
+`youtube.upload` scope and stores no Google password.
 
 The audio-identification page intentionally samples every stream because the
 operator must identify the mic. Do not share it as proof of a “mic-free” result.
@@ -121,6 +132,7 @@ This removes only that generated project folder. It does not remove:
 
 - the recording, combat log, Skada file, music, or other source;
 - `config\<slug>.local.yaml` created by the wizard;
+- `secrets\youtube-client.local.json` and `secrets\youtube-token.local.json`;
 - a downloaded `audio-map.json` or `pull-overrides.json` saved elsewhere;
 - a manual-pull file moved beside the config;
 - a Resolve project created through the API or UI; or
@@ -145,3 +157,15 @@ deleting anything.
 - Share only the intended MP4 and deliberately selected reports.
 - Remember that the preview is not a final master and has no persistent visual
   watermark.
+
+## Before an approved YouTube upload
+
+- Read the complete generated metadata and chapter list.
+- View the generated thumbnail and confirm it contains no unintended private UI.
+- Confirm `privacy_status: private` unless immediate publication is deliberate.
+- Verify the final-validation report is passed and the selected path is the
+  intended final master.
+- Keep the terminal running during the upload. If it exits before a URL is
+  recorded, check YouTube Studio before retrying.
+- After upload, wait for 1440p processing and watch the Private result before
+  changing visibility.

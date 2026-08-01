@@ -58,3 +58,15 @@ final:
   constant_qp: 18
   preset: "p6"
   audio_bitrate: "320k"
+
+youtube:
+  enabled: false
+  client_secrets: null
+  token: null
+  privacy_status: "private"
+  category_id: "20"
+  title: null
+  description: null
+  tags: []
+  made_for_kids: false
+  chunk_size_mib: 16

@@ -70,14 +70,10 @@ def write_edit_summary(
     confidence_threshold: float,
     destination: Path,
 ) -> None:
-    timeline_pull_ids = {
-        pull_id for clip in timeline.clips for pull_id in clip.pull_ids
-    }
+    timeline_pull_ids = {pull_id for clip in timeline.clips for pull_id in clip.pull_ids}
     included_pulls = [pull for pull in pulls if pull.id in timeline_pull_ids]
     counts = Counter(pull.type for pull in included_pulls)
-    uncertain = [
-        pull for pull in included_pulls if pull.confidence < confidence_threshold
-    ]
+    uncertain = [pull for pull in included_pulls if pull.confidence < confidence_threshold]
     removed = max(0.0, probe.duration_seconds - timeline.duration_seconds)
     lines = [
         "# Edit Summary",
@@ -100,7 +96,8 @@ def write_edit_summary(
         "- DaVinci Resolve external scripting: blocked on this host by the apparent non-Studio "
         "edition; FCPXML and a Python 3.13 bridge payload are generated",
         "- Final rendering: available only through the explicit post-review approval gate",
-        "- Upload/publishing: not implemented",
+        "- YouTube upload: available only after final validation, metadata review, and an "
+        "explicit upload approval; Private is the default",
         "",
         "## Recommended manual review",
         "",
@@ -170,7 +167,12 @@ def validate_artifacts(
         True,
         "final rendering requires an explicit --approved flag after review",
     )
-    add("youtube_upload_absent", True, "no authentication or publishing module exists")
+    add(
+        "youtube_upload_approval_gate",
+        True,
+        "YouTube transmission requires a separate --approved flag; public visibility "
+        "requires --public-approved as well",
+    )
     return {
         "status": "passed" if all(check["passed"] for check in checks) else "failed",
         "checks": checks,

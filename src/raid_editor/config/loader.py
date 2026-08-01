@@ -61,11 +61,28 @@ def load_project_config(path: Path) -> ProjectConfig:
                 )
             }
         )
+    normalized_youtube = config.youtube
+    if config.youtube.client_secrets is not None or config.youtube.token is not None:
+        normalized_youtube = config.youtube.model_copy(
+            update={
+                "client_secrets": (
+                    _absolute(base, config.youtube.client_secrets)
+                    if config.youtube.client_secrets is not None
+                    else None
+                ),
+                "token": (
+                    _absolute(base, config.youtube.token)
+                    if config.youtube.token is not None
+                    else None
+                ),
+            }
+        )
     return config.model_copy(
         update={
             "input": normalized_input,
             "music": normalized_music,
             "preview": normalized_preview,
+            "youtube": normalized_youtube,
         }
     )
 

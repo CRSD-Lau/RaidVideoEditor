@@ -159,6 +159,37 @@ def test_load_project_config_resolves_preview_watermark_path(tmp_path: Path) -> 
     assert config.preview.watermark.image == (tmp_path / "assets/camera-cover.png").resolve()
 
 
+def test_load_project_config_resolves_youtube_credential_paths(tmp_path: Path) -> None:
+    payload = _project_payload()
+    payload["youtube"] = {
+        "enabled": True,
+        "client_secrets": "../secrets/youtube-client.local.json",
+        "token": "../secrets/youtube-token.local.json",
+    }
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_path = config_dir / "project.yaml"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    config = load_project_config(config_path)
+
+    assert (
+        config.youtube.client_secrets == (tmp_path / "secrets/youtube-client.local.json").resolve()
+    )
+    assert config.youtube.token == (tmp_path / "secrets/youtube-token.local.json").resolve()
+
+
+def test_enabled_youtube_upload_requires_local_credential_paths() -> None:
+    payload = _project_payload()
+    payload["youtube"] = {"enabled": True}
+
+    with pytest.raises(
+        ValidationError,
+        match="enabled YouTube uploads require client_secrets and token paths",
+    ):
+        ProjectConfig.model_validate(payload)
+
+
 def test_infer_track_roles_uses_absolute_stream_indexes_from_titles() -> None:
     # Arrange
     streams = [

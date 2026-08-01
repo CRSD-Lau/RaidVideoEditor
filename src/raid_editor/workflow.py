@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -53,6 +54,13 @@ from raid_editor.util.paths import (
     atomic_write_text,
     ensure_directory,
     quick_file_fingerprint,
+)
+from raid_editor.youtube.upload import (
+    YouTubePackage,
+    YouTubeUploadError,
+    YouTubeUploadResult,
+    upload_youtube_video,
+    write_youtube_package,
 )
 
 _PULL_LIST = TypeAdapter(list[PullCandidate])
@@ -356,21 +364,11 @@ def render_preview_project(
     return preview, paths
 
 
-def render_final_project(
+def _final_output_settings(
     config: ProjectConfig,
-    *,
-    approved: bool = False,
-    dry_run: bool = False,
-) -> tuple[Path, ProjectPaths, dict[str, object] | None]:
-    if not approved and not dry_run:
-        raise FinalRenderError(
-            "Final rendering requires explicit approval; rerun with --approved after reviewing "
-            "the complete preview"
-        )
-    review_validation, _ = validate_project_artifacts(config)
-    if review_validation["status"] != "passed":
-        raise FinalRenderError("The review validation must pass before final rendering")
-    probe, _, timeline, _, paths = build_timeline_project(config)
+    probe: MediaProbe,
+    paths: ProjectPaths,
+) -> tuple[str, int, int, int, Path]:
     video = probe.video_streams[0] if probe.video_streams else None
     if video is None:
         raise FinalRenderError("The source has no usable video stream")
@@ -390,10 +388,27 @@ def render_final_project(
         fps = int(config.final.fps)
     width_text, height_text = resolution.split("x", maxsplit=1)
     width, height = int(width_text), int(height_text)
+    destination = paths.final_master / f"{paths.root.name}-final-{height}p{fps}.mp4"
+    return resolution, fps, width, height, destination
+
+
+def render_final_project(
+    config: ProjectConfig,
+    *,
+    approved: bool = False,
+    dry_run: bool = False,
+) -> tuple[Path, ProjectPaths, dict[str, object] | None]:
+    if not approved and not dry_run:
+        raise FinalRenderError(
+            "Final rendering requires explicit approval; rerun with --approved after reviewing "
+            "the complete preview"
+        )
+    review_validation, _ = validate_project_artifacts(config)
+    if review_validation["status"] != "passed":
+        raise FinalRenderError("The review validation must pass before final rendering")
+    probe, _, timeline, _, paths = build_timeline_project(config)
+    resolution, fps, width, height, destination = _final_output_settings(config, probe, paths)
     music = selected_music(config)
-    destination = (
-        paths.final_master / f"{paths.root.name}-final-{height}p{fps}.mp4"
-    )
     render_final(
         timeline,
         destination,
@@ -478,6 +493,58 @@ def render_final_project(
     if final_validation["status"] != "passed":
         raise FinalRenderError("The final master rendered but failed post-render validation")
     return destination, paths, final_validation
+
+
+def upload_youtube_project(
+    config: ProjectConfig,
+    *,
+    approved: bool = False,
+    public_approved: bool = False,
+    dry_run: bool = False,
+    progress: Callable[[int], None] | None = None,
+) -> tuple[YouTubePackage, YouTubeUploadResult | None, ProjectPaths]:
+    if not approved and not dry_run:
+        raise YouTubeUploadError(
+            "YouTube upload requires explicit approval; review the generated package and rerun "
+            "with --approved"
+        )
+    if not dry_run and config.youtube.privacy_status == "public" and not public_approved:
+        raise YouTubeUploadError("Public publishing requires the additional --public-approved flag")
+    probe, _, timeline, _, paths = build_timeline_project(config)
+    _, _, _, _, final = _final_output_settings(config, probe, paths)
+    validation_path = paths.reports / "final-validation.json"
+    if not validation_path.is_file():
+        raise YouTubeUploadError("The final validation report is missing")
+    try:
+        validation = json.loads(validation_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise YouTubeUploadError("The final validation report is unreadable") from exc
+    if validation.get("status") != "passed":
+        raise YouTubeUploadError("The final master must pass validation before upload")
+    package = write_youtube_package(config, timeline, final, paths.root / "youtube")
+    if dry_run:
+        return package, None, paths
+    result = upload_youtube_video(
+        config,
+        package,
+        approved=approved,
+        progress=progress,
+    )
+    atomic_write_text(
+        paths.reports / "youtube-upload.md",
+        "# YouTube Upload\n\n"
+        f"- Video ID: `{result.video_id}`\n"
+        f"- URL: {result.url}\n"
+        f"- Privacy: {result.privacy_status}\n"
+        f"- Existing upload reused: {'yes' if result.skipped_existing else 'no'}\n"
+        f"- Custom thumbnail applied: {'yes' if result.thumbnail_applied else 'no'}\n"
+        + (
+            f"- Thumbnail note: {result.thumbnail_error}\n"
+            if result.thumbnail_error is not None
+            else ""
+        ),
+    )
+    return package, result, paths
 
 
 def validate_project_artifacts(config: ProjectConfig) -> tuple[dict[str, object], ProjectPaths]:

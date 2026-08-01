@@ -1,14 +1,14 @@
 # Raid Video Editor architecture
 
-**Status:** implemented MVP, reconciled with source and tests on 2026-07-26  
+**Status:** implemented review-first workflow, reconciled with source and tests on 2026-08-01
 **Runtime:** Windows, CPython 3.12, local command-line workflow  
 **Entry point:** `raid-editor`
 
 ## 1. Scope
 
-Raid Video Editor condenses one local World of Warcraft raid recording into a review edit. It inspects media, makes the audio tracks reviewable, excludes a separately recorded microphone stream, derives pull candidates from local combat evidence, lets the operator replace those candidates with a reviewed list, builds a neutral timeline, exports FCPXML and a Resolve bridge payload, and renders a low-resolution preview.
+Raid Video Editor condenses one local World of Warcraft raid recording into a review edit. It inspects media, makes the audio tracks reviewable, excludes a separately recorded microphone stream, derives pull candidates from local combat evidence, lets the operator replace those candidates with a reviewed list, builds a neutral timeline, exports FCPXML and a Resolve bridge payload, renders a review preview, and can render and upload an explicitly approved final master.
 
-The implemented MVP is review-first rather than autonomous. It does not understand gameplay, remove speech from a mixed track, create a final-quality master, upload media, or publish anything.
+The implementation is review-first rather than autonomous. It does not understand gameplay or remove speech from a mixed track. Final rendering and YouTube transmission are separate approval-gated stages; uploads default to Private and Public requires an additional approval.
 
 ## 2. Implemented workflow
 
@@ -30,6 +30,9 @@ flowchart LR
     X --> Q
     U["Approved local music"] --> Q
     Q --> Z["validate"]
+    Z --> H["render-final --approved"]
+    H --> Y["upload-youtube --dry-run"]
+    Y --> O["upload-youtube --approved\nPrivate by default"]
 ```
 
 The normal operator sequence is:
@@ -42,6 +45,10 @@ uv run raid-editor review config\my-raid.local.yaml
 uv run raid-editor build-timeline config\my-raid.local.yaml
 uv run raid-editor render-preview config\my-raid.local.yaml
 uv run raid-editor validate config\my-raid.local.yaml
+uv run raid-editor render-final config\my-raid.local.yaml --approved
+uv run raid-editor upload-youtube config\my-raid.local.yaml --dry-run
+# Review the generated YouTube package before the separately approved upload.
+uv run raid-editor upload-youtube config\my-raid.local.yaml --approved
 ```
 
 `wizard` offers a guided route through the same stages. It does not add a stronger approval or persistence mechanism.
@@ -60,10 +67,13 @@ The implemented commands are:
 | `build-timeline CONFIG` | Build timeline artifacts, microphone-free sidecar, FCPXML, and Resolve payload. |
 | `create-resolve-project CONFIG` | Invoke the isolated Python 3.13 Resolve helper; supports `--dry-run`. |
 | `render-preview CONFIG` | Build dependencies and render the configured review MP4; supports `--dry-run`. |
+| `render-final CONFIG --approved` | Render and validate the accepted high-quality local master; never uploads it. |
+| `upload-youtube CONFIG --dry-run` | Generate reviewable upload metadata, chapters, and thumbnail with no authentication or transmission. |
+| `upload-youtube CONFIG --approved` | Full-hash and resumably upload the validated master, Private by default. Public also requires `--public-approved`. |
 | `validate CONFIG` | Rebuild required artifacts and run the bounded validation checks. |
 | `wizard [CONFIG]` | Create a local YAML interactively or reopen an existing guided workflow. |
 
-There are no `init`, `doctor`, `audio`, `sync`, `pulls`, `music`, `status`, lock-recovery, standalone export, or final-render commands.
+There are no `init`, `doctor`, `audio`, `sync`, `pulls`, `music`, `status`, lock-recovery, or standalone export commands.
 
 Operational errors handled by a command normally exit with code 2. `validate` exits with code 1 when its checks complete but do not pass.
 
@@ -79,8 +89,9 @@ The durable configuration sections are:
 - `detection`: minimum duration, merge gap, handles, confidence threshold, one combat-log offset, and optional recording start.
 - `editing`: inclusion policies and transition duration.
 - `music`: registry path and explicitly approved IDs.
-- `preview`: resolution, frame rate, bitrate, and a currently unused hardware-encoding placeholder.
-- `final`: reserved and unused in the MVP.
+- `preview`: resolution, frame rate, bitrate, hardware choice, watermark, and presentation cards.
+- `final`: source/explicit geometry and frame rate, codec, quality, preset, hardware choice, and audio bitrate.
+- `youtube`: local OAuth paths, visibility, title/description/tags, audience, and chunk size.
 
 Generated work is placed under `output/<project-name-slug>/`:
 
@@ -90,6 +101,8 @@ review/            static HTML, WAV samples, thumbnails, short MP4 clips
 timeline/          timeline.json, timeline.fcpxml, pull-labels.srt
 generated-assets/  source-microphone-free.mov and its JSON manifest
 preview/           review MP4, FFmpeg filter script, render manifest
+final/             explicitly approved master, FFmpeg filter script, validation manifest
+youtube/           metadata, chapters, thumbnail, checklist, and upload manifest
 reports/           chapters, uncertainty, music, audio, edit, validation reports
 resolve/           create-project.json
 ```
@@ -261,9 +274,9 @@ Selected IDs must exist. Before use, the tool requires all three permission flag
 
 The MVP uses only the first approved track. It loops that track as a low-level preview-only bed at volume 0.16 with two-second fades. Music is not placed in FCPXML or the Resolve project. The registry does not currently store a separate licence-receipt file/hash, expiry, revocation, or per-placement edit instructions.
 
-## 10. Preview rendering and final gate
+## 10. Preview, final-render, and YouTube gates
 
-`render-preview` is the only render command. It uses a generated FFmpeg filter script to:
+`render-preview` uses a generated FFmpeg filter script to:
 
 - Trim and concatenate the timeline clips.
 - Scale and pad to the configured preview resolution.
@@ -273,7 +286,9 @@ The MVP uses only the first approved track. It loops that track as a low-level p
 - Mix only retained audio streams.
 - Optionally loop and mix the first approved music track.
 
-The encoder is software `libx264` with configured bitrate/maxrate/buffer, AAC at 192 kb/s stereo, and `+faststart`. The example configuration uses 1280x720, 30 fps, and 4 Mb/s. `preview.hardware_encoding` is currently ignored.
+The preview uses the configured bitrate, AAC stereo, and `+faststart`, selecting
+NVENC when requested and available or software `libx264` otherwise. The example
+configuration uses 1280x720, 30 fps, and 4 Mb/s.
 
 The preview is identified by:
 
@@ -282,9 +297,22 @@ The preview is identified by:
 - A manifest with `review_only: true`.
 - Reports and CLI wording.
 
-It is **not** persistently watermarked. The only burned-in text is the per-clip label during the first four seconds.
+Optional presentation cards, boss titles, and an image watermark are burned into
+the preview and final when configured.
 
-The final-render gate is structural: there is no final-render command or renderer path, and the `final` configuration section is unused. There is no machine-enforced record that the operator accepted review before running `build-timeline` or `render-preview`.
+`render-final` reuses the deterministic accepted timeline, audio mapping, titles,
+watermark, and presentation cards at the configured final geometry/quality. It
+refuses to run without `--approved`, records approval in its manifest, and runs
+post-render geometry, duration, audio, source-safety, and approval checks. It
+does not authenticate or upload.
+
+`upload-youtube --dry-run` requires a passed final-validation report and writes
+the exact metadata, chapters, thumbnail, and checklist without authentication.
+Actual transmission requires `--approved`; Public also requires
+`--public-approved`. The uploader uses a local desktop OAuth token, the
+`youtube.upload` scope, chunked upload with retry/backoff, a full master SHA-256,
+and a local manifest that prevents re-uploading the same recorded master. It
+applies the generated custom thumbnail when the channel permits it.
 
 ## 11. Reuse, resume, and file safety
 
@@ -294,13 +322,15 @@ The MVP has several small idempotency mechanisms rather than a general stage eng
 - Pull analysis: exact comparison of an analysis manifest containing quick fingerprints and detection settings.
 - Microphone-free sidecar: source size/mtime and audio-map manifest.
 - Preview: SHA-256 signature over serialized timeline content, filter graph, FFmpeg command, and selected music hash.
+- Final: an explicit approval manifest plus post-render validation.
+- YouTube: full final-master and metadata hashes plus the returned video ID; changed metadata for an already recorded master is blocked rather than duplicated.
 - Review assets: reused when their expected path already exists.
 
 There is no content-addressed cache, cache-status command, dependency graph, lock file, stale-lock recovery, quarantine, or general resume coordinator.
 
 Source paths are never passed as output destinations by the normal workflow. YAML inputs and source media are not edited. Atomic replacement is implemented for application-written text and JSON. FFmpeg-generated samples, clips, sidecars, and previews use `-y` inside their managed output directories; they do not have the same atomic/collision guarantee.
 
-`validate` compares source size and nanosecond modification time with the stored probe. It does not recalculate a full recording hash. Full-file SHA-256 is currently reserved for approved music files.
+`validate` compares source size and nanosecond modification time with the stored probe. It does not recalculate a full recording hash. Full-file SHA-256 is used for approved music and immediately before an approved YouTube upload.
 
 ## 12. Validation
 
@@ -312,8 +342,8 @@ Source paths are never passed as output destinations by the normal workflow. YAM
 - A boss clip does not merge multiple pull IDs.
 - The sidecar’s audio-stream count matches the retained count.
 - The preview exists and FFprobe can read it.
-- No final-render command exists.
-- No upload/publishing module exists.
+- Final rendering remains behind a recorded explicit approval gate.
+- YouTube upload remains behind a separate approval gate, with an additional Public gate.
 
 These checks are useful but bounded. They do not prove microphone absence within retained mixed audio, byte-for-byte source identity, watermark presence, exact NLE import behavior, or subjective edit quality.
 
@@ -325,7 +355,7 @@ The MVP does not promise byte-identical media or strict byte-stable JSON/XML acr
 
 ## 14. Tested baseline
 
-At reconciliation time, the suite contains 66 passing tests. Coverage includes:
+At reconciliation time, the suite contains 87 passing tests. Coverage includes:
 
 - Strict YAML and audio-role safety.
 - Combat-log parsing, offsets, year rollover, malformed rows, boss/trash separation, and source bounds.
@@ -335,6 +365,7 @@ At reconciliation time, the suite contains 66 passing tests. Coverage includes:
 - Preview filter mapping and microphone omission.
 - Sidecar stream mapping and source non-modification.
 - Resolve payload safety and isolated Python 3.13 invocation.
+- YouTube credential-path safety, metadata/chapters, upload approval, custom thumbnail application, and duplicate prevention.
 - A synthetic `render-preview --dry-run` journey proving expected artifacts and an unchanged quick source fingerprint.
 
 In addition, a real non-dry-run synthetic 1280x720 preview completed successfully through FFmpeg 8, FFprobe read the result, and `validate` passed. A new Resolve 20.3.2 GUI project then imported the synthetic FCPXML and microphone-free sidecar as a 24-second, three-clip timeline. Final Cut import, the external Resolve API bridge, real HEVC-sidecar import, and real-raid editorial quality remain unproven.
@@ -352,6 +383,6 @@ The following are **not implemented** and must not be described as current behav
 - A persistent `REVIEW — NOT FINAL` watermark or cryptographic approval gate.
 - Multi-recording projects, proxy workflows, or custom Resolve bins.
 - CV/OCR pull detection, speech recognition, source separation, highlight ranking, beat-aware editing, or other AI assistance.
-- A final renderer, uploader, publisher, cloud service, or remote asset downloader.
+- Automatic visibility changes, remote metadata editing, multi-platform publishing, a cloud service, or a remote asset downloader.
 
 These are candidates for later hardening phases. Any CV or AI addition must remain advisory, preserve evidence and model/version provenance, and require human acceptance.

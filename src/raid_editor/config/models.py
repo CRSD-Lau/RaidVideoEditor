@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -166,6 +167,25 @@ class FinalConfig(StrictModel):
         return value
 
 
+class YouTubeConfig(StrictModel):
+    enabled: bool = False
+    client_secrets: Path | None = None
+    token: Path | None = None
+    privacy_status: Literal["private", "unlisted", "public"] = "private"
+    category_id: str = "20"
+    title: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=5000)
+    tags: list[str] = Field(default_factory=list)
+    made_for_kids: bool = False
+    chunk_size_mib: int = Field(default=16, ge=1, le=256)
+
+    @model_validator(mode="after")
+    def enabled_upload_requires_local_credentials(self) -> YouTubeConfig:
+        if self.enabled and (self.client_secrets is None or self.token is None):
+            raise ValueError("enabled YouTube uploads require client_secrets and token paths")
+        return self
+
+
 class ProjectConfig(StrictModel):
     project: ProjectMetadata
     input: InputConfig
@@ -175,3 +195,4 @@ class ProjectConfig(StrictModel):
     music: MusicConfig
     preview: PreviewConfig = Field(default_factory=PreviewConfig)
     final: FinalConfig = Field(default_factory=FinalConfig)
+    youtube: YouTubeConfig = Field(default_factory=YouTubeConfig)

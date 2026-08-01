@@ -5,12 +5,14 @@ long OBS raid recording into pull-focused review media and approved local master
 with FFprobe, keeps explicitly selected game and Discord audio, excludes a
 separately recorded microphone stream, derives pull candidates from local raid
 evidence, exports a neutral timeline and FCPXML, and renders a low-resolution
-preview with FFmpeg, then permits a final-quality render only after an explicit
-approval flag.
+preview with FFmpeg, permits a final-quality render only after an explicit
+approval flag, and can package and resumably upload the validated master to
+YouTube through a separate approval gate.
 
-The application does **not** modify source media, upload a video, or publish
-anything. Human review is required before final rendering, and the final command
-refuses to run without `--approved`.
+The application does **not** modify source media. Human review is required
+before final rendering and again before any YouTube transmission. Uploads
+default to **Private**; immediate public visibility requires a second,
+purpose-specific approval flag.
 
 ## Current workstation status
 
@@ -157,6 +159,28 @@ uv run raid-editor render-final config\my-raid.local.yaml --approved
 This command records approval in the final manifest, renders to `final\`, validates
 the output, and performs no upload or publishing action.
 
+Prepare and inspect the YouTube package without transmitting the video:
+
+```powershell
+uv run raid-editor upload-youtube config\my-raid.local.yaml --dry-run
+```
+
+Review `youtube\metadata.json`, `description.md`, `chapters.txt`,
+`thumbnail-source.jpg`, and `upload-checklist.md`. After accepting those exact
+values, start the upload:
+
+```powershell
+uv run raid-editor upload-youtube config\my-raid.local.yaml --approved
+```
+
+The first approved run opens Google's OAuth consent page in the default browser.
+The OAuth client JSON and resulting token remain under the ignored local
+`secrets\` directory. The command computes the full final-master SHA-256,
+retries transient upload failures, applies the generated thumbnail when the
+channel permits custom thumbnails, records the returned video ID, and will not
+re-upload an identical master/metadata pair. See the [YouTube upload
+workflow](docs/youtube-upload.md).
+
 ## Commands
 
 | Command | What it does |
@@ -168,6 +192,8 @@ the output, and performs no upload or publishing action.
 | `create-resolve-project CONFIG` | Attempts unique-project creation through the Python 3.13 Resolve bridge. Use `--dry-run` first. |
 | `render-preview CONFIG` | Renders only the configured review MP4. Use `--dry-run` to prepare artifacts without starting the MP4 render. |
 | `render-final CONFIG --approved` | Renders and validates the approved local master. The approval flag is mandatory; no upload occurs. |
+| `upload-youtube CONFIG --dry-run` | Generates the title, description, chapters, thumbnail, and checklist without authentication or transmission. |
+| `upload-youtube CONFIG --approved` | Hashes and resumably uploads the validated master. Visibility defaults to Private; Public also requires `--public-approved`. |
 | `validate CONFIG` | Rebuilds required artifacts, checks source metadata, pull bounds, microphone-stream count, and preview readability. |
 | `wizard [CONFIG]` | Runs the guided setup or reopens the guided review for an existing project. |
 
@@ -177,9 +203,10 @@ Add `--verbose` before the command for diagnostic logging:
 uv run raid-editor --verbose analyse config\my-raid.local.yaml
 ```
 
-`--dry-run` is not zero-write: timeline, sidecar, reports, payload, and/or filter
-files may still be prepared. It prevents the Resolve bridge call or preview MP4
-render only.
+`--dry-run` is not zero-write: timeline, sidecar, reports, payload, filter files,
+and/or a YouTube review package may still be prepared. It prevents the Resolve
+bridge call, media render, authentication, or network transmission for the
+corresponding command.
 
 ## Configuration essentials
 
@@ -245,6 +272,18 @@ final:
   constant_qp: 18
   preset: "p6"
   audio_bitrate: "320k"
+
+youtube:
+  enabled: false
+  client_secrets: "../secrets/youtube-client.local.json"
+  token: "../secrets/youtube-token.local.json"
+  privacy_status: "private"
+  category_id: "20"
+  title: null
+  description: null
+  tags: []
+  made_for_kids: false
+  chunk_size_mib: 16
 ```
 
 Audio numbers are absolute FFprobe stream indexes, not OBS track labels or
@@ -264,6 +303,10 @@ encoding enabled, H.264 NVENC uses constant-QP quality; the default QP 18 is a
 high-quality archival/upload master. The preview and final commands share the
 same deterministic timeline, titles, watermark, presentation cards, and audio map.
 
+Set `youtube.enabled: true` only after creating a Google OAuth **Desktop app**
+client. Keep `privacy_status: private` for the first upload. The upload command
+will not accept `public` without the additional `--public-approved` flag.
+
 ## Generated output
 
 Each project writes to `output\<slug-from-project-name>\`:
@@ -275,6 +318,7 @@ timeline\          timeline.json, timeline.fcpxml, pull-labels.srt
 generated-assets\  source-microphone-free.mov and its manifest
 preview\           review MP4, FFmpeg filter script, manifest
 final\             approved local master, FFmpeg filter script, manifest
+youtube\           reviewable title, description, chapters, thumbnail, checklist, upload manifest
 reports\           chapters, uncertainty, music, audio, edit, validation
 resolve\           create-project.json bridge payload
 ```
@@ -290,6 +334,7 @@ guarded PowerShell example and the list of files that live outside `output`.
 - [OBS recording setup](docs/obs-recording-setup.md)
 - [Combat-log and Skada setup](docs/combat-log-setup.md)
 - [Music licensing workflow](docs/music-licensing.md)
+- [YouTube upload workflow](docs/youtube-upload.md)
 - [Resolve setup and deterministic fallback](docs/resolve-setup.md)
 - [Resolve computer-use runbook](docs/resolve-computer-use-runbook.md)
 - [Troubleshooting](docs/troubleshooting.md)
@@ -311,9 +356,12 @@ guarded PowerShell example and the list of files that live outside `output`.
 - The preview is not a final master; final rendering requires `--approved`.
 - Synthetic H.264 FCPXML/Resolve import is proven on this host. Import of the
   current real MOV/HEVC sidecar remains unproven.
-- The API bridge may require Resolve Studio. It refuses to modify an existing
-  project and contains no render-job, final-render, upload, or publishing code.
+- The Resolve API bridge may require Resolve Studio. It refuses to modify an
+  existing project and contains no render-job, final-render, upload, or
+  publishing code; YouTube support is a separate guarded module.
 - Validation is useful but bounded: source safety compares size and nanosecond
   modification time with the probe, and the fingerprint hashes only bounded
   head/tail chunks rather than the entire recording.
-- No command uploads, publishes, or deletes source material.
+- YouTube upload is supported only for an already validated final master and
+  requires a separate approval. No command deletes source material or silently
+  changes an uploaded video's visibility.

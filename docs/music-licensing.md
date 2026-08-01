@@ -148,9 +148,10 @@ Check that:
 - the source URL and date are correct; and
 - the intended use, channel, territory, and monetization status are permitted.
 
-Copy the exact generated attribution text into any later video description only
-after a human verifies it. The application does not upload or update a
-description.
+Verify the exact generated attribution text before approving an upload. The
+YouTube packaging step automatically appends non-empty
+`reports\youtube-attribution.txt` content to the generated description; it does
+not silently edit metadata for a video that is already uploaded.
 
 ## Removal and revocation
 

@@ -18,6 +18,9 @@ config/*.local.json
 .env
 *.token
 *.key
+secrets/
+*.credentials.json
+*.oauth.json
 
 # Source media and generated media
 *.mkv
