@@ -118,6 +118,7 @@ def build_preview_command(
     *,
     bitrate: str,
     music: MusicTrack | None,
+    hardware_encoding: bool = False,
 ) -> list[str]:
     command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-i", str(timeline.source)]
     if music is not None:
@@ -130,10 +131,25 @@ def build_preview_command(
             "[vout]",
             "-map",
             "[aout]",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
+        ]
+    )
+    if hardware_encoding:
+        command.extend(
+            [
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                "p5",
+                "-tune",
+                "hq",
+                "-rc",
+                "vbr",
+            ]
+        )
+    else:
+        command.extend(["-c:v", "libx264", "-preset", "medium"])
+    command.extend(
+        [
             "-b:v",
             bitrate,
             "-maxrate",
@@ -176,6 +192,7 @@ def render_preview(
     bitrate: str,
     transition_seconds: float,
     music: MusicTrack | None = None,
+    hardware_encoding: bool = False,
     dry_run: bool = False,
 ) -> list[str]:
     width_text, height_text = resolution.split("x", maxsplit=1)
@@ -192,7 +209,12 @@ def render_preview(
     )
     atomic_write_text(filter_script, graph)
     command = build_preview_command(
-        timeline, filter_script, destination, bitrate=bitrate, music=music
+        timeline,
+        filter_script,
+        destination,
+        bitrate=bitrate,
+        music=music,
+        hardware_encoding=hardware_encoding,
     )
     signature = hashlib.sha256(
         (

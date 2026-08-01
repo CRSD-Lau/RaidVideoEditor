@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -210,7 +211,13 @@ def detect_from_combat_log(
     if skada_export is not None:
         boss_pulls: list[PullCandidate] = []
         last_success_by_name: dict[str, tuple[int, int]] = {}
-        for segment in parse_skada_storage(skada_export):
+        skada_segments = parse_skada_storage(skada_export)
+        encounter_counts = Counter(segment.mob_name.casefold() for segment in skada_segments)
+        attempt_numbers: Counter[str] = Counter()
+        for segment in skada_segments:
+            encounter_key = segment.mob_name.casefold()
+            attempt_numbers[encounter_key] += 1
+            attempt_number = attempt_numbers[encounter_key]
             start_seconds = segment.start_epoch - recording_start.timestamp() + offset
             end_seconds = segment.end_epoch - recording_start.timestamp() + offset
             start_seconds = max(0.0, start_seconds)
@@ -247,12 +254,12 @@ def detect_from_combat_log(
                     segment.end_epoch,
                     segment.duration_seconds,
                 )
-            elif segment.success is False:
+            elif segment.success is False or encounter_counts[encounter_key] > 1:
                 skada_type = "boss_wipe"
                 skada_result = "wipe"
-                confidence = 0.96
+                confidence = 0.96 if segment.success is False else 0.90
                 include = True
-                title = segment.mob_name
+                title = f"{segment.mob_name} — Attempt {attempt_number} (Wipe)"
                 notes = ""
             else:
                 skada_type = "boss_attempt"
@@ -274,6 +281,11 @@ def detect_from_combat_log(
                         "SkadaStorage:starttime",
                         "SkadaStorage:endtime",
                         "SkadaStorage:mobname",
+                        *(
+                            ["SkadaStorage:inferred_wipe_from_repeated_encounter"]
+                            if segment.success is None and encounter_counts[encounter_key] > 1
+                            else []
+                        ),
                         *(["SkadaStorage:possible_duplicate"] if possible_duplicate else []),
                         f"sync:{sync_mode}",
                     ],

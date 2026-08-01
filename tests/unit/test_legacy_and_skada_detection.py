@@ -113,3 +113,57 @@ SkadaStorageDB = {{
         ("unknown", "unknown", False),
     ]
     assert any("possible_duplicate" in evidence for evidence in pulls[1].evidence)
+
+
+def test_repeated_skada_encounters_without_success_are_wipes(tmp_path: Path) -> None:
+    recording_start = datetime(2026, 7, 24, 23, 0, tzinfo=UTC)
+    recording = tmp_path / "raid.mov"
+    recording.write_bytes(b"media identity placeholder")
+    combat_log = tmp_path / "WoWCombatLog.txt"
+    combat_log.write_text(
+        "".join(
+            _legacy_row(recording_start + timedelta(seconds=second))
+            for second in range(100, 321)
+        ),
+        encoding="utf-8",
+    )
+    epoch = round(recording_start.timestamp())
+    skada = tmp_path / "SkadaStorage.lua"
+    skada.write_text(
+        f"""
+SkadaStorageDB = {{
+  {{
+    ["starttime"] = {epoch + 100},
+    ["mobname"] = "Professor Putricide",
+    ["type"] = "raid",
+    ["endtime"] = {epoch + 180},
+  }},
+  {{
+    ["starttime"] = {epoch + 220},
+    ["success"] = true,
+    ["mobname"] = "Professor Putricide",
+    ["type"] = "raid",
+    ["endtime"] = {epoch + 320},
+  }},
+}}
+""",
+        encoding="utf-8",
+    )
+
+    pulls = detect_from_combat_log(
+        combat_log,
+        recording,
+        recording_duration_seconds=400,
+        settings=DetectionConfig(
+            minimum_pull_seconds=2,
+            merge_gap_seconds=2,
+            recording_started_at=recording_start,
+        ),
+        skada_export=skada,
+    )
+
+    assert [(pull.type, pull.result) for pull in pulls] == [
+        ("boss_wipe", "wipe"),
+        ("boss_kill", "kill"),
+    ]
+    assert pulls[0].title == "Professor Putricide — Attempt 1 (Wipe)"

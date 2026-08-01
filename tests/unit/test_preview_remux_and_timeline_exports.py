@@ -109,9 +109,24 @@ def test_preview_command_maps_only_filtered_review_outputs(tmp_path: Path) -> No
     ]
     assert mapped_values == ["[vout]", "[aout]"]
     assert command.count("-i") == 1
+    assert "-/filter_complex" in command
+    assert command[command.index("-c:v") + 1] == "libx264"
     assert str(timeline.source) in command
     assert str(destination) == command[-1]
     assert "Review render only" in " ".join(command)
+
+
+def test_preview_command_can_use_nvenc_for_a_configured_review(tmp_path: Path) -> None:
+    command = build_preview_command(
+        _timeline(tmp_path / "source.mkv"),
+        tmp_path / "review.filters.txt",
+        tmp_path / "review.mp4",
+        bitrate="4M",
+        music=None,
+        hardware_encoding=True,
+    )
+
+    assert command[command.index("-c:v") + 1] == "h264_nvenc"
 
 
 def test_mic_free_remux_maps_retained_streams_and_never_changes_source(

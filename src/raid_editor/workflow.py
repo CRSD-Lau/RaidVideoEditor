@@ -56,6 +56,7 @@ from raid_editor.util.paths import (
 )
 
 _PULL_LIST = TypeAdapter(list[PullCandidate])
+_ANALYSIS_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ def analyse_project(
 ) -> tuple[MediaProbe, list[PullCandidate], ProjectPaths]:
     probe, paths = inspect_project(config, create_samples=True)
     signature = {
+        "analysis_schema_version": _ANALYSIS_SCHEMA_VERSION,
         "recording": probe.source,
         "combat_log": (
             quick_file_fingerprint(config.input.combat_log)
@@ -307,6 +309,7 @@ def render_preview_project(
         bitrate=config.preview.bitrate,
         transition_seconds=config.editing.transition_duration_seconds,
         music=music[0] if music else None,
+        hardware_encoding=config.preview.hardware_encoding,
         dry_run=dry_run,
     )
     retained_names = [

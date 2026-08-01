@@ -159,7 +159,7 @@ def probe_media(
                     pixel_format=stream.get("pix_fmt"),
                     bitrate=_int(stream.get("bit_rate")),
                     duration_seconds=_float(stream.get("duration")),
-                    title=tags.get("title"),
+                    title=tags.get("title") or tags.get("name"),
                     language=tags.get("language"),
                     hardware_decoding_compatibility=_hardware_paths(codec),
                 )
@@ -175,7 +175,7 @@ def probe_media(
                     sample_rate=_int(stream.get("sample_rate")),
                     bitrate=_int(stream.get("bit_rate")),
                     duration_seconds=_float(stream.get("duration")),
-                    title=tags.get("title"),
+                    title=tags.get("title") or tags.get("name"),
                     language=tags.get("language"),
                 )
             )
