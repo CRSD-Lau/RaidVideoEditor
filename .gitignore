@@ -14,6 +14,7 @@ build/
 # Local/user configuration and secrets
 config/project.yaml
 config/*.local.yaml
+config/*.local.json
 .env
 *.token
 *.key
@@ -42,4 +43,3 @@ music/files/*
 .vscode/
 Thumbs.db
 Desktop.ini
-
