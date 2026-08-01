@@ -47,8 +47,10 @@ Inspect every file in `output\<project>\youtube\`:
 - `description.md`: copyable description with YouTube chapters;
 - `chapters.txt`: chapter offsets including presentation intro/outro time;
 - `thumbnail-source.jpg`: 1280x720 JPEG constrained to YouTube's 2 MB limit;
-- `studio-details.md`: the exact Studio-only category, game rating, language,
-  licence, embedding, and end-screen choices;
+- `studio-details.md`: the exact Studio-only category, requested game rating,
+  language, licence, embedding, and end-screen choices. Current Studio may not
+  expose a separate editable game-rating field, so never substitute another
+  rating;
 - `upload-checklist.md`: human review and processing checks;
 - `video-source.txt`: absolute validated master selected for upload.
 
@@ -119,6 +121,8 @@ For an unverified API project, leave
 the package checklist says **Required publishing route: YouTube Studio**. Upload
 the exact file in `video-source.txt`, apply `thumbnail-source.jpg`, copy the
 generated title and description, and set the fields in `studio-details.md`.
+If the current Studio form has no separate game-rating control, leave that field
+unset. Selecting the requested game is not permission to invent a rating.
 
 ## Duplicate and interruption safety
 

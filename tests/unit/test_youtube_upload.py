@@ -124,7 +124,9 @@ def test_youtube_package_contains_title_chapters_and_private_metadata(
     assert "Boss chapters" in metadata["description"]
     assert "—" not in metadata["title"]
     assert "—" not in metadata["description"]
-    assert "World of Warcraft" in package.studio_details.read_text(encoding="utf-8")
+    studio_details = package.studio_details.read_text(encoding="utf-8")
+    assert "World of Warcraft" in studio_details
+    assert "Current YouTube Studio may not expose" in studio_details
     assert "YouTube Data API" in package.root.joinpath("upload-checklist.md").read_text(
         encoding="utf-8"
     )

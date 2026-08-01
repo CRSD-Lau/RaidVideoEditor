@@ -168,7 +168,9 @@ uv run raid-editor upload-youtube config\my-raid.local.yaml --dry-run
 Review `youtube\metadata.json`, `description.md`, `chapters.txt`,
 `thumbnail-source.jpg`, `studio-details.md`, and `upload-checklist.md`. For a
 Public post from an unverified API project, use those exact files in YouTube
-Studio. For a Private API upload, start the upload with:
+Studio. If Studio has no separate game-rating control, leave it unset rather
+than substituting another rating. For a Private API upload, start the upload
+with:
 
 ```powershell
 uv run raid-editor upload-youtube config\my-raid.local.yaml --approved
