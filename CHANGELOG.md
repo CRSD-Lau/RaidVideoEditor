@@ -24,6 +24,3 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   publication confirmation, and retention reporting.
 - Read-only OBS preflight and copy-only, SHA-256-verified archiving.
 - Synthetic fixtures, unit tests, integration tests, and operational runbooks.
-
-[Unreleased]: https://github.com/CRSD-Lau/RaidVideoEditor/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/CRSD-Lau/RaidVideoEditor/releases/tag/v0.1.0
