@@ -56,7 +56,7 @@ Use a single-quoted Windows path or forward slashes:
 
 ```yaml
 input:
-  recording: 'C:\Users\neil_\Videos\2026-07-26 20-00-00.mov'
+  recording: 'C:\Users\YourName\Videos\2026-07-26 20-00-00.mov'
   combat_log: 'D:\world of warcraft 3.3.5a hd\Logs\WoWCombatLog.txt'
   details_export: null
   skada_export: null

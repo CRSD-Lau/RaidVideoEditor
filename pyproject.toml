@@ -10,6 +10,17 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Neil Mitchell" }]
+keywords = ["video-editing", "world-of-warcraft", "obs", "ffmpeg", "youtube"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows :: Windows 10",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Video :: Conversion",
+]
 dependencies = [
   "google-api-python-client>=2.181,<3",
   "google-auth-oauthlib>=1.2.2,<2",
@@ -17,6 +28,11 @@ dependencies = [
   "PyYAML>=6.0.2,<7",
   "typer>=0.16,<1",
 ]
+
+[project.urls]
+Documentation = "https://github.com/CRSD-Lau/RaidVideoEditor/tree/main/docs"
+Issues = "https://github.com/CRSD-Lau/RaidVideoEditor/issues"
+Repository = "https://github.com/CRSD-Lau/RaidVideoEditor"
 
 [project.optional-dependencies]
 dev = [
@@ -51,6 +67,7 @@ ignore = ["S101", "S603"]
 "src/raid_editor/audio/tracks.py" = ["E501"]
 "src/raid_editor/cli.py" = ["B008"]
 "src/raid_editor/review/html.py" = ["E501"]
+"src/raid_editor/highlights/review.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

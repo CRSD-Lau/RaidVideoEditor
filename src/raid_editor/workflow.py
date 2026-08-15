@@ -20,11 +20,27 @@ from raid_editor.audio.tracks import (
     generate_audio_review_page,
     validate_audio_mapping,
 )
+from raid_editor.classification.difficulty import (
+    DETECTOR_VERSION,
+    classify_pull_difficulties,
+    summarize_raid_progress,
+    write_difficulty_report,
+)
 from raid_editor.config.loader import project_output_dir
 from raid_editor.config.models import ProjectConfig
 from raid_editor.detection.pipeline import analyse_pulls
+from raid_editor.highlights.detection import (
+    analyse_highlights,
+    load_highlight_selection,
+    write_highlight_candidates,
+)
+from raid_editor.highlights.render import render_vertical_highlights
+from raid_editor.highlights.review import (
+    generate_highlight_review_media,
+    generate_highlight_review_page,
+)
 from raid_editor.ingestion.probe import MediaProbe, probe_media
-from raid_editor.models import PullCandidate, TimelineDocument
+from raid_editor.models import HighlightCandidate, PullCandidate, TimelineDocument
 from raid_editor.music.library import (
     MusicTrack,
     approved_tracks,
@@ -64,7 +80,9 @@ from raid_editor.youtube.upload import (
 )
 
 _PULL_LIST = TypeAdapter(list[PullCandidate])
-_ANALYSIS_SCHEMA_VERSION = 3
+_HIGHLIGHT_LIST = TypeAdapter(list[HighlightCandidate])
+_ANALYSIS_SCHEMA_VERSION = 5
+_HIGHLIGHT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -78,6 +96,9 @@ class ProjectPaths:
     final_master: Path
     reports: Path
     resolve: Path
+    highlights: Path
+    analytics: Path
+    archive: Path
 
     @classmethod
     def for_config(cls, config: ProjectConfig) -> ProjectPaths:
@@ -92,6 +113,9 @@ class ProjectPaths:
             final_master=root / "final",
             reports=root / "reports",
             resolve=root / "resolve",
+            highlights=root / "highlights",
+            analytics=root / "analytics",
+            archive=root / "archive",
         )
 
     def create(self) -> ProjectPaths:
@@ -104,6 +128,9 @@ class ProjectPaths:
             self.final_master,
             self.reports,
             self.resolve,
+            self.highlights,
+            self.analytics,
+            self.archive,
         ):
             ensure_directory(path)
         return self
@@ -160,6 +187,8 @@ def analyse_project(
             else None
         ),
         "detection": config.detection.model_dump(mode="json"),
+        "difficulty": config.difficulty.model_dump(mode="json"),
+        "difficulty_detector_version": DETECTOR_VERSION,
     }
     manifest_path = paths.analysis / "analysis-manifest.json"
     candidates_path = paths.analysis / "pull-candidates.json"
@@ -182,12 +211,31 @@ def analyse_project(
             manual_pulls=config.input.manual_pulls,
             issues_destination=paths.analysis / "combat-log-issues.json",
         )
+        pulls = classify_pull_difficulties(
+            pulls,
+            combat_log=config.input.combat_log,
+            recording_started_at=config.detection.recording_started_at,
+            recording_duration_seconds=probe.duration_seconds,
+            recording_offset_seconds=config.detection.combat_log_offset_seconds,
+            settings=config.difficulty,
+        )
         write_pull_candidates(
             pulls,
             candidates_path,
             paths.analysis / "pull-candidates.csv",
         )
         atomic_write_json(manifest_path, signature)
+    progress = summarize_raid_progress(
+        pulls,
+        raid_name=config.project.raid,
+        settings=config.difficulty,
+    )
+    write_difficulty_report(
+        pulls,
+        progress,
+        json_destination=paths.analysis / "difficulty.json",
+        markdown_destination=paths.reports / "difficulty.md",
+    )
     write_uncertain_segments(
         pulls,
         paths.reports / "uncertain-segments.md",
@@ -207,15 +255,9 @@ def analyse_project(
             pulls,
             paths.review,
             config.audio.retained_stream_indexes(),
-            max_preview_seconds=(
-                None if full_pull_review else config.preview.review_clip_seconds
-            ),
-            lead_in_seconds=(
-                config.detection.pre_roll_seconds if full_pull_review else 0.0
-            ),
-            lead_out_seconds=(
-                config.detection.post_roll_seconds if full_pull_review else 0.0
-            ),
+            max_preview_seconds=(None if full_pull_review else config.preview.review_clip_seconds),
+            lead_in_seconds=(config.detection.pre_roll_seconds if full_pull_review else 0.0),
+            lead_out_seconds=(config.detection.post_roll_seconds if full_pull_review else 0.0),
             recording_duration_seconds=probe.duration_seconds,
         )
         generate_pull_review_page(
@@ -226,20 +268,122 @@ def analyse_project(
     return probe, pulls, paths
 
 
-def _load_saved_pulls(config: ProjectConfig, paths: ProjectPaths) -> list[PullCandidate]:
-    if config.input.manual_pulls is not None:
-        return analyse_pulls(
-            recording=config.input.recording,
-            recording_duration_seconds=probe_media(config.input.recording).duration_seconds,
-            settings=config.detection,
-            combat_log=config.input.combat_log,
-            skada_export=config.input.skada_export,
-            manual_pulls=config.input.manual_pulls,
+def _highlight_audio_streams(config: ProjectConfig) -> list[int]:
+    indexes: list[int] = []
+    if config.highlights.keep_game_audio and config.audio.game_track is not None:
+        indexes.append(config.audio.game_track)
+    if config.highlights.keep_discord_audio and config.audio.discord_track is not None:
+        indexes.append(config.audio.discord_track)
+    indexes = list(dict.fromkeys(indexes))
+    if config.audio.microphone_track is not None and config.audio.microphone_track in indexes:
+        raise ValueError("Highlight audio must not include the configured microphone stream")
+    if not indexes:
+        raise ValueError("Highlight review requires game or Discord audio")
+    return indexes
+
+
+def analyse_highlights_project(
+    config: ProjectConfig,
+    *,
+    create_review_media: bool = True,
+) -> tuple[list[HighlightCandidate], ProjectPaths]:
+    probe, pulls, paths = analyse_project(config, create_review_media=False)
+    audio_streams = _highlight_audio_streams(config)
+    known_streams = {stream.index for stream in probe.audio_streams}
+    unknown = [stream for stream in audio_streams if stream not in known_streams]
+    if unknown:
+        raise ValueError(f"Highlight audio references missing streams: {unknown}")
+    candidates_path = paths.highlights / "candidates.json"
+    manifest_path = paths.highlights / "analysis-manifest.json"
+    if config.highlights.manual_selection is not None:
+        candidates = load_highlight_selection(config.highlights.manual_selection)
+    else:
+        signature = {
+            "schema_version": _HIGHLIGHT_SCHEMA_VERSION,
+            "recording": probe.source,
+            "combat_log": (
+                quick_file_fingerprint(config.input.combat_log)
+                if config.input.combat_log is not None and config.input.combat_log.is_file()
+                else None
+            ),
+            "pulls": [pull.model_dump(mode="json") for pull in pulls],
+            "highlights": config.highlights.model_dump(mode="json"),
+            "audio_streams": audio_streams,
+        }
+        cached = False
+        if candidates_path.is_file() and manifest_path.is_file():
+            try:
+                if json.loads(manifest_path.read_text(encoding="utf-8")) == signature:
+                    candidates = _HIGHLIGHT_LIST.validate_json(
+                        candidates_path.read_text(encoding="utf-8")
+                    )
+                    cached = True
+            except (OSError, ValueError, json.JSONDecodeError):
+                cached = False
+        if not cached:
+            candidates = analyse_highlights(
+                config.input.recording,
+                pulls,
+                game_stream_index=config.audio.game_track,
+                discord_stream_index=config.audio.discord_track,
+                microphone_stream_index=config.audio.microphone_track,
+                combat_log=config.input.combat_log,
+                recording_started_at=config.detection.recording_started_at,
+                recording_duration_seconds=probe.duration_seconds,
+                recording_offset_seconds=config.detection.combat_log_offset_seconds,
+                settings=config.highlights,
+            )
+            atomic_write_json(
+                candidates_path,
+                [candidate.model_dump(mode="json") for candidate in candidates],
+            )
+            atomic_write_json(manifest_path, signature)
+    write_highlight_candidates(
+        candidates,
+        json_destination=candidates_path,
+        markdown_destination=paths.reports / "highlight-candidates.md",
+    )
+    if create_review_media:
+        assets = generate_highlight_review_media(
+            config.input.recording,
+            candidates,
+            paths.highlights / "review",
+            audio_stream_indexes=audio_streams,
         )
-    source = paths.analysis / "pull-candidates.json"
-    if not source.is_file():
-        return analyse_project(config, create_review_media=False)[1]
-    return _PULL_LIST.validate_json(source.read_text(encoding="utf-8"))
+        generate_highlight_review_page(
+            candidates,
+            assets,
+            paths.highlights / "review" / "index.html",
+            includes_discord=(
+                config.highlights.keep_discord_audio and config.audio.discord_track is not None
+            ),
+        )
+    return candidates, paths
+
+
+def render_highlights_project(
+    config: ProjectConfig,
+    *,
+    approved: bool,
+    dry_run: bool = False,
+) -> tuple[list[Path], ProjectPaths]:
+    candidates, paths = analyse_highlights_project(config, create_review_media=False)
+    outputs = render_vertical_highlights(
+        config.input.recording,
+        candidates,
+        paths.highlights / "vertical",
+        audio_stream_indexes=_highlight_audio_streams(config),
+        microphone_stream_index=config.audio.microphone_track,
+        settings=config.highlights,
+        approved=approved,
+        dry_run=dry_run,
+    )
+    return outputs, paths
+
+
+def _load_saved_pulls(config: ProjectConfig, paths: ProjectPaths) -> list[PullCandidate]:
+    del paths
+    return analyse_project(config, create_review_media=False)[1]
 
 
 def build_timeline_project(
@@ -417,7 +561,7 @@ def render_final_project(
     review_validation, _ = validate_project_artifacts(config)
     if review_validation["status"] != "passed":
         raise FinalRenderError("The review validation must pass before final rendering")
-    probe, _, timeline, _, paths = build_timeline_project(config)
+    probe, pulls, timeline, _, paths = build_timeline_project(config)
     resolution, fps, width, height, destination = _final_output_settings(config, probe, paths)
     music = selected_music(config)
     render_final(
@@ -521,7 +665,7 @@ def upload_youtube_project(
         )
     if not dry_run and config.youtube.privacy_status == "public" and not public_approved:
         raise YouTubeUploadError("Public publishing requires the additional --public-approved flag")
-    probe, _, timeline, _, paths = build_timeline_project(config)
+    probe, pulls, timeline, _, paths = build_timeline_project(config)
     _, _, _, _, final = _final_output_settings(config, probe, paths)
     validation_path = paths.reports / "final-validation.json"
     if not validation_path.is_file():
@@ -532,7 +676,13 @@ def upload_youtube_project(
         raise YouTubeUploadError("The final validation report is unreadable") from exc
     if validation.get("status") != "passed":
         raise YouTubeUploadError("The final master must pass validation before upload")
-    package = write_youtube_package(config, timeline, final, paths.root / "youtube")
+    package = write_youtube_package(
+        config,
+        timeline,
+        final,
+        paths.root / "youtube",
+        pulls=pulls,
+    )
     if dry_run:
         return package, None, paths
     result = upload_youtube_video(

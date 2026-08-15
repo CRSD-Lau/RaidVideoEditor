@@ -1,38 +1,48 @@
+![WoW Raid Video Editor social preview](docs/assets/social-preview.jpg)
+
 # WoW Raid Video Editor
 
-WoW Raid Video Editor is a local, review-first Python 3.12 CLI for condensing one
-long OBS raid recording into pull-focused review media and approved local masters. It inspects the recording
-with FFprobe, keeps explicitly selected game and Discord audio, excludes a
-separately recorded microphone stream, derives pull candidates from local raid
-evidence, exports a neutral timeline and FCPXML, and renders a low-resolution
-preview with FFmpeg, permits a final-quality render only after an explicit
-approval flag, and can package and resumably upload the validated master to
-YouTube through a separate approval gate.
+[![CI](https://github.com/CRSD-Lau/RaidVideoEditor/actions/workflows/ci.yml/badge.svg)](https://github.com/CRSD-Lau/RaidVideoEditor/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-D5A448.svg)](LICENSE)
+
+Local-first, deterministic automation for turning a long OBS raid recording
+into a polished full-clear movie and optional social highlights.
+
+WoW Raid Video Editor is a local, review-first Python 3.12 CLI for turning one
+long OBS raid recording into an approved full-clear movie and optional portrait
+social clips. It verifies OBS before raid night, detects and labels winning boss
+pulls, classifies ICC Normal/Heroic modes with auditable combat-log evidence,
+and produces full-pull review media. A separate highlight lane fuses Discord
+energy, game audio, motion changes, raid deaths, and kill climaxes into ranked
+suggestions. Those suggestions are never approved automatically.
+
+The full movie keeps game audio and excludes Discord and microphone tracks. The
+highlight lane may keep game plus Discord reactions, but still refuses the
+configured microphone stream. The editor also generates scoreline-aware YouTube
+metadata, three thumbnail candidates, playlist and analytics helpers, and a
+copy-only hash-verified archive plan.
 
 The application does **not** modify source media. Human review is required
-before final rendering and again before any YouTube transmission. Uploads
-default to **Private**; immediate public visibility requires a second,
-purpose-specific approval flag.
+before final rendering, portrait highlight rendering, playlist changes,
+archiving, and any YouTube transmission. Uploads default to **Private**;
+immediate public visibility requires a second, purpose-specific approval flag.
 
 ## Current workstation status
 
-The following facts were checked on the development workstation on 2026-07-26:
+The following facts were checked by the read-only preflight on 2026-08-15:
 
-- OBS Studio 32.1.2 records MOV with HEVC and all six recording tracks enabled.
-  However, both `Desktop Audio` and `Mic/Aux` are currently routed to every
-  track. The six tracks therefore do not provide a microphone-free program
-  track. Future recordings must route the microphone to a separate track; this
-  software cannot remove speech already baked into every track. Treat the
-  current long recording as detection/review evidence only; do not mislabel a
-  mixed track as microphone-free to force timeline creation.
-- The audited 2026-07-24 MOV is 900x1600 portrait at 60 fps even though the
-  active OBS profile now reports a 1920x1080 output. The preview renderer fits
-  without cropping and pads to 1280x720; it does not make creative reframing
-  decisions.
-- The legacy WoW 3.3.5 combat log is
-  `D:\world of warcraft 3.3.5a hd\Logs\WoWCombatLog.txt`. It is an accumulated
-  file of about 300 MB. The parser streams it and selects the recording-time
-  window instead of loading the whole file into memory.
+- The active `WoW_Raid_1440p60` profile is configured for 2560x1440 at 60 fps,
+  Hybrid MP4, and `D:\RaidRecordings` with more than 700 GiB free.
+- Tracks 1 through 4 are labelled Full Mix, WoW Game, Discord, and Microphone.
+  Source routing is isolated correctly: WoW uses tracks 1/2, Discord uses 1/3,
+  and Mic/Aux uses 1/4.
+- The active `WoW Raid` scene contains WoW, WebCam, and WebCam Border.
+- The configured combat log existed but was stale. Start `/combatlog`, create a
+  fresh event, and provide a fresh 10-second smoke recording before the next
+  raid.
+- The accumulated WoW 3.3.5 combat log is streamed only for the recording-time
+  window instead of being loaded into memory.
 - DaVinci Resolve 20.3.2 is installed as the apparent non-Studio edition. Its
   installed API documentation identifies the scripting API as a Resolve Studio
   feature. The installed shim works only through Python 3.13 on this host.
@@ -108,6 +118,17 @@ Generated fixture output is written beneath
 
 ## Start a real project
 
+On Friday, run the read-only preflight after a fresh 10-second OBS recording:
+
+```powershell
+uv run raid-editor preflight config\my-raid.local.yaml `
+  --smoke-recording 'D:\RaidRecordings\Friday smoke test.mp4'
+```
+
+The command checks the active profile and scene, 1440p60 geometry, disk space,
+safe container, track labels and routing, combat-log freshness, and the actual
+smoke file. It does not read OBS service credentials or stream keys.
+
 The guided path is:
 
 ```powershell
@@ -130,6 +151,13 @@ uv run raid-editor analyse config\my-raid.local.yaml
 uv run raid-editor review config\my-raid.local.yaml
 ```
 
+After the recording exists, the weekly shortcut prepares both independent
+review gates without rendering or uploading anything:
+
+```powershell
+uv run raid-editor prepare-weekly config\my-raid.local.yaml
+```
+
 In the pull review:
 
 1. Listen and watch enough source evidence to confirm the mapping.
@@ -149,6 +177,18 @@ uv run raid-editor validate config\my-raid.local.yaml
 Watch the complete preview and read the reports before manually importing the
 FCPXML into Resolve. Preview creation remains an operator review boundary; final
 rendering adds a machine-enforced approval flag and records it in the manifest.
+
+The highlight review is separate from the full movie. Download the reviewed
+`highlight-overrides.json`, set `highlights.manual_selection`, then render only
+the rows explicitly marked `include: true`:
+
+```powershell
+uv run raid-editor analyse-highlights config\my-raid.local.yaml --open
+uv run raid-editor render-highlights config\my-raid.local.yaml --approved
+```
+
+Portrait exports retain game plus Discord reaction audio and exclude the
+microphone. They are posting packages only; no TikTok or Shorts upload occurs.
 
 After watching and approving the complete preview, create the local final master:
 
@@ -184,19 +224,49 @@ channel permits custom thumbnails, records the returned video ID, and will not
 re-upload an identical master/metadata pair. See the [YouTube upload
 workflow](docs/youtube-upload.md).
 
+After publication, playlist management and analytics remain explicit commands:
+
+```powershell
+uv run raid-editor confirm-youtube-publication config\my-raid.local.yaml `
+  --video-id VIDEO_ID --maximum-quality 1440p60 --approved
+uv run raid-editor sync-playlist config\my-raid.local.yaml `
+  --video-id VIDEO_ID --approved
+uv run raid-editor youtube-analytics config\my-raid.local.yaml `
+  --video-id VIDEO_ID --label 48h
+uv run raid-editor youtube-analytics config\my-raid.local.yaml `
+  --video-id VIDEO_ID --label 7d
+```
+
+When public playback and 1440p processing have been verified, inspect the
+copy-only plan before approving an archive:
+
+```powershell
+uv run raid-editor archive-plan config\my-raid.local.yaml
+uv run raid-editor archive config\my-raid.local.yaml --approved
+```
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
+| `preflight CONFIG [--smoke-recording FILE]` | Read-only Friday check of OBS profile/scene, 1440p60, disk, tracks, combat log, and an optional real test file. |
 | `inspect TARGET` | Probes a YAML project or recording and optionally creates audio samples. |
-| `analyse CONFIG` | Detects pulls and writes JSON, CSV, reports, thumbnails, and configurable sample or full-pull review clips. |
+| `analyse CONFIG` | Detects pulls, classifies supported ICC difficulty evidence, and writes reports plus configurable sample or full-pull review clips. |
 | `review CONFIG` | Regenerates and opens the local pull review. |
+| `analyse-highlights CONFIG` | Ranks funny, reaction, movement, clutch, and intense moments; all candidates default to unapproved. |
+| `prepare-weekly CONFIG` | Prepares and optionally opens both boss and highlight review gates without a final render or upload. |
 | `build-timeline CONFIG` | Writes timeline JSON, SRT labels, chapters, FCPXML, Resolve payload, and the microphone-free MOV sidecar. |
 | `create-resolve-project CONFIG` | Attempts unique-project creation through the Python 3.13 Resolve bridge. Use `--dry-run` first. |
 | `render-preview CONFIG` | Renders only the configured review MP4. Use `--dry-run` to prepare artifacts without starting the MP4 render. |
 | `render-final CONFIG --approved` | Renders and validates the approved local master. The approval flag is mandatory; no upload occurs. |
-| `upload-youtube CONFIG --dry-run` | Generates the title, description, chapters, thumbnail, and checklist without authentication or transmission. |
+| `render-highlights CONFIG --approved` | Renders only selected portrait clips with game/Discord audio and a hard microphone exclusion. |
+| `upload-youtube CONFIG --dry-run` | Generates scoreline titles, difficulty chapters, three thumbnails, description, and checklists without authentication or transmission. |
 | `upload-youtube CONFIG --approved` | Hashes and resumably uploads the validated master. Visibility defaults to Private. Public API uploads require `--public-approved` and a verified API project; otherwise use Studio. |
+| `confirm-youtube-publication CONFIG --video-id ID --approved` | Records an operator-confirmed public watch page and 1440p/1440p60 result for the archive gate; performs no remote verification. |
+| `sync-playlist CONFIG --video-id ID --approved` | Idempotently creates/finds the configured weekly playlist and adds the approved video. |
+| `youtube-analytics CONFIG --video-id ID` | Writes read-only summary and audience-retention reports; Studio-only impressions/CTR can be supplied manually. |
+| `archive-plan CONFIG` | Lists every proposed archive copy without hashing, copying, moving, or deleting. |
+| `archive CONFIG --approved` | Copies and SHA-256 verifies the approved archive; no source deletion command exists. |
 | `validate CONFIG` | Rebuilds required artifacts, checks source metadata, pull bounds, microphone-stream count, and preview readability. |
 | `wizard [CONFIG]` | Runs the guided setup or reopens the guided review for an existing project. |
 
@@ -237,7 +307,7 @@ audio:
   discord_track: 3
   mixed_track: 1
   keep_game_audio: true
-  keep_discord_audio: true
+  keep_discord_audio: false
   remove_microphone: true
 
 detection:
@@ -248,6 +318,33 @@ detection:
   confidence_threshold: 0.70
   combat_log_offset_seconds: 0
   recording_started_at: "2026-07-26T20:00:00-03:00"
+
+difficulty:
+  enabled: true
+  raid_size: null
+  expected_bosses: 12
+  title_raid_abbreviation: "ICC"
+  require_confirmed_for_auto_title: true
+
+highlights:
+  enabled: true
+  manual_selection: null
+  maximum_candidates: 12
+  minimum_score: 0.30
+  keep_game_audio: true
+  keep_discord_audio: true
+  motion_keyframes_only: true
+  vertical_resolution: "1080x1920"
+
+preflight:
+  enabled: true
+  obs_profile_dir: "WoW_Raid_1440p60"
+  obs_scene_collection_file: "WoW_Raid_Recording.json"
+  expected_scene: "WoW Raid"
+  expected_resolution: "2560x1440"
+  expected_fps: 60
+  minimum_free_space_gib: 150
+  smoke_recording_max_age_minutes: 30
 
 editing:
   include_trash_pulls: true
@@ -280,6 +377,8 @@ youtube:
   enabled: false
   client_secrets: "../secrets/youtube-client.local.json"
   token: "../secrets/youtube-token.local.json"
+  management_token: "../secrets/youtube-token-management.local.json"
+  analytics_token: "../secrets/youtube-token-analytics.local.json"
   privacy_status: "private"
   category_id: "20"
   category_name: "Gaming"
@@ -299,6 +398,21 @@ youtube:
   api_project_verified_for_public: false
   forbid_em_dash: true
   chunk_size_mib: 16
+  thumbnail_variants: 3
+  selected_thumbnail_variant: 1
+  playlist_auto_add: true
+  playlist_id: null
+  playlist_title: "Pizza Warriors Weekly ICC Clears"
+  playlist_privacy_status: "public"
+  analytics_enabled: true
+
+archive:
+  enabled: false
+  destination: null
+  include_raw_recording: true
+  include_final_master: true
+  include_project_artifacts: true
+  require_public_1440p_verified: true
 ```
 
 Audio numbers are absolute FFprobe stream indexes, not OBS track labels or
@@ -331,12 +445,15 @@ Each project writes to `output\<slug-from-project-name>\`:
 ```text
 analysis\          media probe, pull candidates, parser issues
 review\            local HTML, audio samples, thumbnails, sample or full-pull clips
+highlights\         ranked candidates, full review clips, approved portrait exports
 timeline\          timeline.json, timeline.fcpxml, pull-labels.srt
 generated-assets\  source-microphone-free.mov and its manifest
 preview\           review MP4, FFmpeg filter script, manifest
 final\             approved local master, FFmpeg filter script, manifest
-youtube\           reviewable title, description, chapters, thumbnail, checklist, upload manifest
-reports\           chapters, uncertainty, music, audio, edit, validation
+youtube\           title, description, chapters, thumbnail tests, playlist and upload plans
+analytics\         read-only 48-hour and 7-day YouTube performance reports
+archive\           copy-only plan; approved archive files go to the configured destination
+reports\           difficulty, highlights, chapters, audio, edit, validation, upload status
 resolve\           create-project.json bridge payload
 ```
 
@@ -348,6 +465,8 @@ guarded PowerShell example and the list of files that live outside `output`.
 
 ## Documentation
 
+- [Documentation index](docs/README.md)
+- [Architecture and safety boundaries](docs/architecture.md)
 - [OBS recording setup](docs/obs-recording-setup.md)
 - [Combat-log and Skada setup](docs/combat-log-setup.md)
 - [Music licensing workflow](docs/music-licensing.md)
@@ -356,6 +475,9 @@ guarded PowerShell example and the list of files that live outside `output`.
 - [Resolve computer-use runbook](docs/resolve-computer-use-runbook.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Security, privacy, and generated-file removal](docs/security-and-privacy.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## Explicit MVP limitations
 
@@ -367,6 +489,22 @@ guarded PowerShell example and the list of files that live outside `output`.
 - Pull detection is evidence-based, not gameplay understanding. Damage-activity
   clusters are lower-confidence and unclassified; Skada evidence can still be
   misaligned.
+- Highlight detection ranks signals rather than understanding humor. Every
+  candidate defaults to excluded and requires full-clip review.
+
+Difficulty labels are per winning pull. Supported, unambiguous boss-specific
+spell evidence wins; conflicting or missing evidence remains `UNKNOWN` and can
+block the automatic heroic scoreline. The title format is
+`ICC 25M 12/12 7HC Full Clear` for a fully confirmed example, never a guessed
+Heroic count.
+
+- Highlight detection is heuristic proposal generation, not content
+  understanding. Audio energy, motion, combat pressure, and boss kills may
+  produce false positives or miss a good joke. Review the full candidate clips
+  and opt in to each export. The default visual pass samples keyframes so a
+  multi-hour Friday recording stays practical; set
+  `motion_keyframes_only: false` for a slower, denser scan when visual motion
+  matters more than runtime.
 - The browser review downloads files but does not apply them.
 - Only the first approved music ID is mixed into the preview. Music is not added
   to FCPXML or the Resolve project.
@@ -382,3 +520,6 @@ guarded PowerShell example and the list of files that live outside `output`.
 - YouTube upload is supported only for an already validated final master and
   requires a separate approval. No command deletes source material or silently
   changes an uploaded video's visibility.
+- Playlist changes and archive copies each require their own approval. Analytics
+  are read-only; thumbnail impressions and click-through rate must currently be
+  copied from Studio into the report command.

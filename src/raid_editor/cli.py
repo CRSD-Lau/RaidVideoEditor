@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import webbrowser
+from datetime import date
 from pathlib import Path
 from typing import NoReturn
 
 import typer
 import yaml
 
+from raid_editor.archive import create_verified_archive, write_archive_plan
 from raid_editor.audio.tracks import (
     create_audio_samples,
     generate_audio_review_page,
@@ -18,18 +20,24 @@ from raid_editor.audio.tracks import (
 )
 from raid_editor.config.loader import PROJECT_ROOT, load_project_config
 from raid_editor.ingestion.probe import probe_media
+from raid_editor.preflight import run_preflight
 from raid_editor.resolve.bridge import run_resolve_bridge
 from raid_editor.util.logging import configure_logging
 from raid_editor.util.paths import atomic_write_text, ensure_directory, slugify
 from raid_editor.workflow import (
+    ProjectPaths,
+    analyse_highlights_project,
     analyse_project,
     build_timeline_project,
     inspect_project,
     render_final_project,
+    render_highlights_project,
     render_preview_project,
     upload_youtube_project,
     validate_project_artifacts,
 )
+from raid_editor.youtube.growth import add_video_to_weekly_playlist, fetch_video_analytics
+from raid_editor.youtube.upload import record_publication_confirmation
 
 app = typer.Typer(
     name="raid-editor",
@@ -133,6 +141,80 @@ def review(
         typer.echo(f"Pull review: {page}")
         if open_browser:
             _open(page)
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("analyse-highlights")
+def analyse_highlights_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    review_media: bool = typer.Option(True, "--review-media/--no-review-media"),
+    open_browser: bool = typer.Option(False, "--open/--no-open"),
+) -> None:
+    """Rank funny, reaction, movement, clutch, and intense moments for review."""
+
+    try:
+        config = load_project_config(config_path)
+        candidates, paths = analyse_highlights_project(
+            config,
+            create_review_media=review_media,
+        )
+        page = paths.highlights / "review" / "index.html"
+        typer.echo(f"Highlight candidates: {len(candidates)}")
+        typer.echo(f"Candidate data: {paths.highlights / 'candidates.json'}")
+        if review_media:
+            typer.echo(f"Highlight review: {page}")
+            if open_browser:
+                _open(page)
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("render-highlights")
+def render_highlights_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm the selected highlight clips and Discord audio were reviewed.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Render only include=true highlight selections as portrait social clips."""
+
+    try:
+        config = load_project_config(config_path)
+        outputs, paths = render_highlights_project(
+            config,
+            approved=approved,
+            dry_run=dry_run,
+        )
+        typer.echo(f"Vertical clips: {len(outputs)}")
+        typer.echo(f"Package: {paths.highlights / 'vertical' / 'posting-package.md'}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("prepare-weekly")
+def prepare_weekly_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Prepare boss and highlight review gates without rendering a final or uploading."""
+
+    try:
+        config = load_project_config(config_path)
+        _, pulls, paths = analyse_project(config, create_review_media=True)
+        highlights, _ = analyse_highlights_project(config, create_review_media=True)
+        pull_page = paths.review / "pull-review.html"
+        highlight_page = paths.highlights / "review" / "index.html"
+        typer.echo(f"Winning-pull candidates: {len(pulls)}")
+        typer.echo(f"Highlight candidates: {len(highlights)}")
+        typer.echo(f"Pull review: {pull_page}")
+        typer.echo(f"Highlight review: {highlight_page}")
+        if open_browser:
+            _open(pull_page)
+            _open(highlight_page)
     except (OSError, ValueError, RuntimeError) as exc:
         _error(exc)
 
@@ -282,6 +364,214 @@ def validate(
             raise typer.Exit(1)
     except typer.Exit:
         raise
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command()
+def preflight(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    smoke_recording: Path | None = typer.Option(
+        None,
+        "--smoke-recording",
+        help="A fresh 10-second OBS test recording to probe.",
+    ),
+    obs_root: Path | None = typer.Option(
+        None,
+        "--obs-root",
+        help="Override the OBS configuration root for testing.",
+        hidden=True,
+    ),
+) -> None:
+    """Run the read-only Friday OBS, disk, logging, scene, and track check."""
+
+    report = None
+    try:
+        config = load_project_config(config_path)
+        if not config.preflight.enabled:
+            raise ValueError("Preflight is disabled in the project configuration")
+        paths = ProjectPaths.for_config(config).create()
+        report = run_preflight(
+            config,
+            destination_json=paths.reports / "preflight.json",
+            destination_markdown=paths.reports / "preflight.md",
+            obs_root=obs_root,
+            smoke_recording=smoke_recording,
+        )
+        typer.echo(f"Preflight: {report.status.upper()}")
+        for item in report.checks:
+            typer.echo(f"  {item.status.upper():7} {item.name}: {item.detail}")
+        typer.echo(f"Report: {paths.reports / 'preflight.md'}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+    if report is not None and report.status != "passed":
+        raise typer.Exit(1)
+
+
+@app.command("sync-playlist")
+def sync_playlist_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    video_id: str = typer.Option(..., "--video-id", help="Published YouTube video ID."),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm creation or modification of the configured YouTube playlist.",
+    ),
+) -> None:
+    """Idempotently add an approved upload to the weekly raid playlist."""
+
+    try:
+        config = load_project_config(config_path)
+        paths = ProjectPaths.for_config(config).create()
+        result = add_video_to_weekly_playlist(
+            config,
+            video_id=video_id,
+            approved=approved,
+            report_destination=paths.reports / "youtube-playlist.md",
+        )
+        typer.echo(f"Playlist: {result.playlist_title} ({result.playlist_id})")
+        typer.echo("Video already present." if result.already_present else "Video added.")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("confirm-youtube-publication")
+def confirm_youtube_publication_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    video_id: str = typer.Option(..., "--video-id", help="Public YouTube video ID."),
+    maximum_quality: str = typer.Option(
+        "1440p60",
+        "--maximum-quality",
+        help="Operator-observed public playback quality: 1440p or 1440p60.",
+    ),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm the public watch page and maximum quality were personally checked.",
+    ),
+) -> None:
+    """Record local evidence of an operator-verified public 1440p watch page."""
+
+    try:
+        config = load_project_config(config_path)
+        package, _result, paths = upload_youtube_project(
+            config,
+            approved=False,
+            public_approved=False,
+            dry_run=True,
+        )
+        payload = record_publication_confirmation(
+            config,
+            package,
+            video_id=video_id,
+            maximum_quality=maximum_quality,
+            approved=approved,
+            report_destination=paths.reports / "youtube-publication.md",
+        )
+        typer.echo(f"Recorded public verification: {payload['url']}")
+        typer.echo(f"Maximum quality: {payload['maximum_quality_confirmed']}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("youtube-analytics")
+def youtube_analytics_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    video_id: str = typer.Option(..., "--video-id", help="Published YouTube video ID."),
+    label: str = typer.Option("48h", "--label", help="Report label, normally 48h or 7d."),
+    start_date: str | None = typer.Option(None, "--start-date", help="YYYY-MM-DD."),
+    end_date: str | None = typer.Option(None, "--end-date", help="YYYY-MM-DD."),
+    studio_impressions: int | None = typer.Option(None, "--studio-impressions", min=0),
+    studio_ctr_percent: float | None = typer.Option(
+        None,
+        "--studio-ctr-percent",
+        min=0,
+        max=100,
+    ),
+) -> None:
+    """Write a read-only 48-hour or 7-day YouTube performance report."""
+
+    try:
+        config = load_project_config(config_path)
+        _, _, timeline, _, paths = build_timeline_project(config)
+        final = next(paths.final_master.glob("*final*.mp4"), None)
+        duration = (
+            probe_media(final).duration_seconds
+            if final is not None and final.is_file()
+            else timeline.duration_seconds
+        )
+        report_start = (
+            date.fromisoformat(start_date)
+            if start_date is not None
+            else config.project.raid_date or date.today()
+        )
+        report_end = date.fromisoformat(end_date) if end_date is not None else date.today()
+        if report_end < report_start:
+            raise ValueError("end_date must not precede start_date")
+        payload = fetch_video_analytics(
+            config,
+            video_id=video_id,
+            start_date=report_start,
+            end_date=report_end,
+            video_duration_seconds=duration,
+            label=label,
+            json_destination=paths.analytics / f"{label}.json",
+            markdown_destination=paths.analytics / f"{label}.md",
+            studio_impressions=studio_impressions,
+            studio_ctr_percent=studio_ctr_percent,
+        )
+        typer.echo(f"Analytics report: {paths.analytics / f'{label}.md'}")
+        summary = payload.get("summary")
+        views = summary.get("views", "unavailable") if isinstance(summary, dict) else "unavailable"
+        typer.echo(f"Views: {views}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("archive-plan")
+def archive_plan_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+) -> None:
+    """Write a copy-only archive plan without hashing, copying, moving, or deleting."""
+
+    try:
+        config = load_project_config(config_path)
+        paths = ProjectPaths.for_config(config).create()
+        items = write_archive_plan(
+            config,
+            config_path=config_path.expanduser().resolve(),
+            project_root=paths.root,
+            json_destination=paths.archive / "plan.json",
+            markdown_destination=paths.archive / "plan.md",
+        )
+        typer.echo(f"Archive files: {len(items)}")
+        typer.echo(f"Plan: {paths.archive / 'plan.md'}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("archive")
+def archive_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm copy-only archival to the configured destination.",
+    ),
+) -> None:
+    """Copy and hash-verify approved raid files; never delete source files."""
+
+    try:
+        config = load_project_config(config_path)
+        paths = ProjectPaths.for_config(config).create()
+        destination = create_verified_archive(
+            config,
+            config_path=config_path.expanduser().resolve(),
+            project_root=paths.root,
+            approved=approved,
+        )
+        typer.echo(f"Verified archive: {destination}")
+        typer.echo("Source files were not deleted.")
     except (OSError, ValueError, RuntimeError) as exc:
         _error(exc)
 

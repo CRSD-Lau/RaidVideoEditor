@@ -4,18 +4,32 @@ The MVP is designed to run locally and to leave source files unchanged. Local
 does not mean non-sensitive: generated samples, clips, reports, and timelines can
 contain voice, player names, file paths, and licensing evidence.
 
+## Source repository boundary
+
+The Git repository excludes recordings, generated output, local YAML/JSON
+configuration, OAuth clients, OAuth tokens, private keys, and the complete
+`secrets/` directory. The committed CI workflow scans full history with
+Gitleaks. Before a release or new remote push, scan both Git history and the
+staged snapshot; never rely on filename exclusions alone.
+
+Repository presentation assets contain no recording frames or private player
+data. The social preview uses the user-supplied guild mark over an original
+background. Brand artwork is outside the source-code license; see
+[Third-party notices](../THIRD_PARTY_NOTICES.md).
+
 ## Network and publication boundary
 
-Normal inspection, analysis, review, timeline, preview, validation, and final
-render commands remain local. They do not implement cloud storage, telemetry,
-authentication, upload, or remote music acquisition. Browser-opening review
-commands open a local `file:` page.
+Normal inspection, analysis, highlight ranking, review, timeline, preview,
+validation, final render, preflight, and archive planning remain local. They do
+not implement cloud storage, telemetry, authentication, upload, or remote music
+acquisition. Browser-opening review commands open a local `file:` page.
 
-`upload-youtube` is the sole network/publication path. Its dry run creates only
-local review artifacts. Transmission requires `--approved`, defaults to Private,
-and requires the additional `--public-approved` flag if the YAML requests Public.
-The Resolve bridge remains isolated from this path and explicitly forbids render
-and upload requests.
+`upload-youtube` transmits only after `--approved`, defaults to Private, and
+requires the additional `--public-approved` flag if the YAML requests Public.
+`sync-playlist` is a separate approval-gated YouTube mutation.
+`youtube-analytics` is authenticated but read-only. Each purpose uses a separate
+token file and least-purpose scope. The Resolve bridge remains isolated from
+these paths and explicitly forbids render and upload requests.
 
 The operator can still share files manually or use another application's
 network features. Keep the review workspace outside synchronized folders unless
@@ -35,6 +49,11 @@ The CLI writes beneath `output\<project-slug>\` and may create
 `config\<project-slug>.local.yaml` through the wizard. It never intentionally
 renames, moves, deletes, or overwrites the source inputs.
 
+`archive` is the only command that writes outside the output tree. It requires
+`--approved`, copies only to the exact configured destination, refuses an
+existing project destination, and verifies every source/destination SHA-256.
+There is no archive move, cleanup, or source deletion operation.
+
 `validate` checks that the source size and nanosecond modification time still
 match the cached probe. The media fingerprint hashes bounded head/tail chunks,
 not the complete recording. Treat this as a practical change detector, not a
@@ -53,6 +72,8 @@ timeline, sidecar, report, manifest, payload, and filter files.
 | `review\audio-samples\*.wav` | Every inspected stream, including microphone speech |
 | `review\assets\*.mp4` | Gameplay and retained voice comms |
 | `review\pull-review.html` | Encounter names, notes, evidence, local media references |
+| `highlights\review\assets\*.mp4` | Full candidate windows with game and Discord audio |
+| `highlights\vertical\*.mp4` | Approved portrait exports with potentially private raid comms |
 | `timeline\timeline.fcpxml` | Absolute `file:` URI to the generated sidecar |
 | `resolve\create-project.json` | Absolute sidecar path, clip labels and ranges |
 | `reports\*` | Raid titles, detected encounters, audio names, music/license evidence |
@@ -60,11 +81,14 @@ timeline, sidecar, report, manifest, payload, and filter files.
 | `final\*.mp4` | Approved high-quality master selected for upload |
 | `youtube\metadata.json` | Intended title, description, tags, audience, and visibility |
 | `youtube\upload-manifest.json` | Full master hash, metadata hash, YouTube video ID and URL |
+| `analytics\*` | Channel-owner views, retention, CTR entered from Studio, and video ID |
+| external archive destination | Raw source, final master, project artifacts, and hashes |
 
 OAuth client and token files live under the repository's ignored `secrets\`
 directory, outside the generated output tree. They must never be committed,
-shared, logged, or copied into reports. The application requests only the
-`youtube.upload` scope and stores no Google password.
+shared, logged, or copied into reports. Upload, playlist management, and
+analytics use separate tokens and scopes; the application stores no Google
+password.
 
 The audio-identification page intentionally samples every stream because the
 operator must identify the mic. Do not share it as proof of a “mic-free” result.
@@ -76,9 +100,9 @@ fonts, analytics, or server. They can still reveal local content when copied
 with their asset folder.
 
 The browser cannot safely overwrite project files. It downloads
-`audio-map.json` or `pull-overrides.json`; the operator must inspect and apply
-those files. Treat downloaded JSON as untrusted input until the CLI validates
-it.
+`audio-map.json`, `pull-overrides.json`, or `highlight-overrides.json`; the
+operator must inspect and apply those files. Treat downloaded JSON as untrusted
+input until the CLI validates it.
 
 ## Combat and Skada parsing
 

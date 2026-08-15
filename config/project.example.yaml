@@ -18,7 +18,7 @@ audio:
   discord_track: null
   mixed_track: null
   keep_game_audio: true
-  keep_discord_audio: true
+  keep_discord_audio: false
   remove_microphone: true
 
 detection:
@@ -29,6 +29,58 @@ detection:
   confidence_threshold: 0.70
   combat_log_offset_seconds: 0
   recording_started_at: null
+
+difficulty:
+  enabled: true
+  raid_size: 25
+  expected_bosses: 12
+  title_raid_abbreviation: "ICC"
+  require_confirmed_for_auto_title: true
+
+highlights:
+  enabled: true
+  manual_selection: null
+  review_clip_seconds: 45
+  lead_in_seconds: 25
+  lead_out_seconds: 15
+  maximum_candidates: 12
+  minimum_spacing_seconds: 30
+  fusion_window_seconds: 8
+  minimum_score: 0.30
+  discord_rms_threshold_db: -27
+  game_rms_threshold_db: -20
+  motion_scene_threshold: 0.12
+  motion_sample_fps: 2
+  motion_keyframes_only: true
+  include_kill_climaxes: true
+  keep_game_audio: true
+  keep_discord_audio: true
+  vertical_resolution: "1080x1920"
+  hardware_encoding: true
+
+preflight:
+  enabled: true
+  obs_profile_dir: "WoW_Raid_1440p60"
+  obs_scene_collection_file: "WoW_Raid_Recording.json"
+  expected_scene: "WoW Raid"
+  expected_resolution: "2560x1440"
+  expected_fps: 60
+  minimum_free_space_gib: 150
+  combat_log_max_age_minutes: 30
+  require_fresh_combat_log: true
+  smoke_recording_max_age_minutes: 30
+  smoke_recording_min_seconds: 5
+  smoke_recording_max_seconds: 120
+  required_recording_tracks:
+    1: "Full Mix"
+    2: "WoW Game"
+    3: "Discord"
+    4: "Microphone"
+  required_source_tracks:
+    "WoW Audio": [1, 2]
+    "Discord Audio": [1, 3]
+    "Mic/Aux": [1, 4]
+  required_scene_sources: ["WoW", "WebCam", "WebCam Border"]
 
 editing:
   include_trash_pulls: true
@@ -63,6 +115,8 @@ youtube:
   enabled: false
   client_secrets: null
   token: null
+  management_token: null
+  analytics_token: null
   privacy_status: "private"
   category_id: "20"
   category_name: "Gaming"
@@ -85,3 +139,18 @@ youtube:
   api_project_verified_for_public: false
   forbid_em_dash: true
   chunk_size_mib: 16
+  thumbnail_variants: 3
+  selected_thumbnail_variant: 1
+  playlist_auto_add: true
+  playlist_id: null
+  playlist_title: "Pizza Warriors Weekly ICC Clears"
+  playlist_privacy_status: "public"
+  analytics_enabled: true
+
+archive:
+  enabled: false
+  destination: null
+  include_raw_recording: true
+  include_final_master: true
+  include_project_artifacts: true
+  require_public_1440p_verified: true

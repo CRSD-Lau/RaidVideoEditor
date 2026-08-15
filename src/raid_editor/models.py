@@ -19,6 +19,9 @@ PullType = Literal[
     "unknown",
 ]
 PullResult = Literal["kill", "wipe", "success", "unknown", "not_applicable"]
+DifficultyMode = Literal["10N", "10H", "25N", "25H", "UNKNOWN"]
+DifficultyConfidence = Literal["high", "medium", "low", "none"]
+HighlightCategory = Literal["funny", "reaction", "intense", "movement", "clutch"]
 
 
 class PullCandidate(BaseModel):
@@ -36,6 +39,10 @@ class PullCandidate(BaseModel):
     include: bool = True
     title: str | None = None
     notes: str = ""
+    difficulty: DifficultyMode = "UNKNOWN"
+    difficulty_confidence: DifficultyConfidence = "none"
+    difficulty_evidence: list[str] = Field(default_factory=list)
+    difficulty_reason: str = ""
 
     @model_validator(mode="after")
     def valid_window(self) -> PullCandidate:
@@ -49,6 +56,30 @@ class PullCandidate(BaseModel):
         return self
 
 
+class HighlightCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    peak_seconds: float = Field(ge=0)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    category: HighlightCategory
+    score: float = Field(ge=0, le=1)
+    signals: list[str] = Field(default_factory=list)
+    encounter: str | None = None
+    include: bool = False
+    title: str
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def valid_window_and_peak(self) -> HighlightCandidate:
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        if not self.start_seconds <= self.peak_seconds <= self.end_seconds:
+            raise ValueError("peak_seconds must fall inside the highlight window")
+        return self
+
+
 class TimelineClip(BaseModel):
     source_in: float = Field(ge=0)
     source_out: float = Field(gt=0)
@@ -56,6 +87,8 @@ class TimelineClip(BaseModel):
     label: str
     type: PullType
     result: PullResult
+    encounter: str | None = None
+    difficulty: DifficultyMode = "UNKNOWN"
     transition_in: str | None = None
     transition_out: str | None = None
     pull_ids: list[str] = Field(default_factory=list)

@@ -58,6 +58,30 @@ def build_filter_graph(
         duration = clip.source_out - clip.source_in
         fade = min(transition, duration / 4)
         label = f"v{clip_index}"
+        show_difficulty = clip.type.startswith("boss")
+        if clip.difficulty.endswith("H"):
+            difficulty_badge = "HEROIC"
+            difficulty_color = "0xA83A2F"
+        elif clip.difficulty.endswith("N"):
+            difficulty_badge = "NORMAL"
+            difficulty_color = "0x2F6595"
+        else:
+            difficulty_badge = "UNCONFIRMED"
+            difficulty_color = "0x596579"
+        raid_size = clip.difficulty[:2] if clip.difficulty != "UNKNOWN" else None
+        clip_kicker = (
+            f"{boss_kicker} - {raid_size} PLAYER" if raid_size is not None else boss_kicker
+        )
+        difficulty_overlay = (
+            f",drawbox=x={ui(592)}:y={ui(34)}:w={ui(116)}:h={ui(30)}:"
+            f"color={difficulty_color}@0.94:t=fill:enable='lt(t,4)',"
+            "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+            f"text='{difficulty_badge}':fontcolor=white:fontsize={ui(12)}:"
+            f"x={ui(592)}+({ui(116)}-text_w)/2:y={ui(41)}:"
+            "enable='lt(t,4)'"
+            if show_difficulty
+            else ""
+        )
         video_filter = (
             f"[0:v:0]trim=start={clip.source_in:.6f}:end={clip.source_out:.6f},"
             "setpts=PTS-STARTPTS,"
@@ -78,9 +102,10 @@ def build_filter_graph(
             f"fontcolor=0xF2D28B:fontsize={ui(32)}:x={ui(48)}:y={ui(28)}:"
             "enable='lt(t,4)',"
             "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
-            f"text='{_escape_drawtext(boss_kicker)}':"
+            f"text='{_escape_drawtext(clip_kicker)}':"
             f"fontcolor=0x8ECDF2:fontsize={ui(14)}:x={ui(49)}:y={ui(72)}:"
             "enable='lt(t,4)'"
+            f"{difficulty_overlay}"
         )
         if fade > 0:
             video_filter += (
@@ -90,8 +115,7 @@ def build_filter_graph(
         filters.append(f"{video_filter}[{label}]")
         video_labels.append(f"[{label}]")
     filters.append(
-        "".join(video_labels)
-        + f"concat=n={len(video_labels)}:v=1:a=0,format=yuv420p[vbase]"
+        "".join(video_labels) + f"concat=n={len(video_labels)}:v=1:a=0,format=yuv420p[vbase]"
     )
 
     logo_labels: dict[str, str] = {}

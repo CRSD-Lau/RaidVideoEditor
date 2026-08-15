@@ -122,8 +122,7 @@ def test_repeated_skada_encounters_without_success_are_wipes(tmp_path: Path) -> 
     combat_log = tmp_path / "WoWCombatLog.txt"
     combat_log.write_text(
         "".join(
-            _legacy_row(recording_start + timedelta(seconds=second))
-            for second in range(100, 321)
+            _legacy_row(recording_start + timedelta(seconds=second)) for second in range(100, 321)
         ),
         encoding="utf-8",
     )

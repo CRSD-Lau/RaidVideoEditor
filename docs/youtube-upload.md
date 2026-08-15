@@ -7,12 +7,17 @@ upload. A Public post from an unverified API project must use the generated
 package in YouTube Studio because YouTube forces API uploads from those projects
 to Private.
 
-The implementation follows Google's official [Python upload
+The upload implementation follows Google's official [Python upload
 guide](https://developers.google.com/youtube/v3/guides/uploading_a_video), uses
 the `youtube.upload` OAuth scope, sends the file with a [resumable upload
 request](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol),
 and applies the generated JPEG through
 [`thumbnails.set`](https://developers.google.com/youtube/v3/docs/thumbnails/set).
+Playlist management uses a separate purpose-specific token and the official
+[`playlistItems.insert`](https://developers.google.com/youtube/v3/docs/playlistItems/insert)
+operation. Read-only performance reports use a third token and the YouTube
+Analytics metrics for average duration, average percentage viewed, and
+audience-retention ratios.
 
 ## One-time Google setup
 
@@ -46,7 +51,11 @@ Inspect every file in `output\<project>\youtube\`:
   audience flags, and requested visibility;
 - `description.md`: copyable description with YouTube chapters;
 - `chapters.txt`: chapter offsets including presentation intro/outro time;
-- `thumbnail-source.jpg`: 1280x720 JPEG constrained to YouTube's 2 MB limit;
+- `thumbnail-01.jpg` through `thumbnail-03.jpg`: scoreline, first-Heroic, and
+  final-boss 1280x720 candidates constrained to YouTube's 2 MB limit;
+- `thumbnail-source.jpg`: the configured candidate selected for upload;
+- `thumbnail-test-plan.md`: the Studio Test & Compare plan;
+- `playlist-plan.md` and `analytics-plan.md`: post-publish actions;
 - `studio-details.md`: the exact Studio-only category, requested game rating,
   language, licence, embedding, and end-screen choices. Current Studio may not
   expose a separate editable game-rating field, so never substitute another
@@ -59,9 +68,12 @@ regenerated package. Do not hand-edit `metadata.json`; it is reproducible output
 
 ## Professional post settings
 
-Keep the generated copy direct and human. The title leads with the raid name,
-the description explains what was kept in the edit, and manual boss chapters
-make the full clear easy to navigate. The package allows no more than three
+Keep the generated copy direct and human. When `youtube.title` is `null`, the
+title starts with confirmed progress, size, and Heroic count. A fully confirmed
+example is `ICC 25M 12/12 7HC Full Clear | Pizza Warriors WoW WotLK | Aug 14`.
+If any included winning boss has unknown difficulty, the package refuses to
+claim a precise automatic Heroic count. Boss chapters append `(Heroic)` or
+`(Normal)` from the same evidence. The package allows no more than three
 focused hashtags and rejects em dashes when `forbid_em_dash` is enabled.
 
 For a World of Warcraft raid, use:
@@ -83,6 +95,11 @@ youtube:
   notify_subscribers: true
   api_project_verified_for_public: false
   forbid_em_dash: true
+  thumbnail_variants: 3
+  selected_thumbnail_variant: 1
+  playlist_auto_add: true
+  playlist_title: "Pizza Warriors Weekly ICC Clears"
+  analytics_enabled: true
 ```
 
 In Studio, add **Subscribe** and **Best for viewer** over the final five-second
@@ -139,14 +156,53 @@ unset. Selecting the requested game is not permission to invent a rating.
 - A thumbnail permission error does not discard a successfully uploaded video;
   the report records the failure so the JPEG can be applied manually.
 
+## Playlist, thumbnail test, and analytics
+
+After the exact public video ID is known, the playlist command finds the exact
+configured title or uses the configured ID. It checks for the video before
+inserting, so repeating the approved command is idempotent:
+
+```powershell
+uv run raid-editor confirm-youtube-publication config\my-raid.local.yaml `
+  --video-id VIDEO_ID --maximum-quality 1440p60 --approved
+uv run raid-editor sync-playlist config\my-raid.local.yaml `
+  --video-id VIDEO_ID --approved
+```
+
+`confirm-youtube-publication` records what the operator personally checked on
+the public watch page. It does not claim a remote API verification. The stored
+public and 1440p evidence unlocks the default archive safety gate.
+
+Start Studio's Thumbnail Test & Compare using the generated candidates when the
+video has enough impressions. The editor does not choose a winner by itself.
+
+At roughly 48 hours and seven days, produce read-only reports:
+
+```powershell
+uv run raid-editor youtube-analytics config\my-raid.local.yaml `
+  --video-id VIDEO_ID --label 48h --studio-impressions 1200 `
+  --studio-ctr-percent 5.2
+uv run raid-editor youtube-analytics config\my-raid.local.yaml `
+  --video-id VIDEO_ID --label 7d --studio-impressions 6000 `
+  --studio-ctr-percent 5.8
+```
+
+The API supplies views, average view duration, average viewed percentage,
+subscriber actions, and audience-retention rows. Thumbnail impressions and CTR
+are entered from Studio because they are not part of this lightweight Analytics
+query. Reports call out first-30-second retention plus the largest relative dips
+and spikes; they never modify the published video.
+
 ## Credential recovery and removal
 
 If authorization is revoked or the token is corrupt, move only
-`secrets\youtube-token.local.json` to a safe backup location and rerun the
-approved command to start Google's consent flow again. Do not delete the OAuth
-client JSON unless intentionally replacing the client.
+the affected token to a safe backup location and rerun that approved/read-only
+command to start Google's consent flow again. Upload, playlist management, and
+analytics use separate token files so their scopes are not silently combined.
+Do not delete the OAuth client JSON unless intentionally replacing the client.
 
 To remove local access after the workflow is no longer needed, revoke the app in
 the Google account's third-party access settings, then remove the exact two
-local JSON files under `secrets\`. This does not delete an uploaded video. Delete
-or change the video only in YouTube Studio after verifying its exact video ID.
+local token and OAuth-client JSON files under `secrets\`. This does not delete an
+uploaded video. Delete or change the video only in YouTube Studio after
+verifying its exact video ID.

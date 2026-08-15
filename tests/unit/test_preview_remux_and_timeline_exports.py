@@ -53,6 +53,8 @@ def _timeline(source: Path) -> TimelineDocument:
                 label="Boss — Wipe",
                 type="boss_wipe",
                 result="wipe",
+                encounter="Lord Marrowgar",
+                difficulty="25H",
                 transition_in="fade",
                 pull_ids=["boss-1"],
             ),
@@ -93,6 +95,8 @@ def test_preview_filter_graph_includes_only_retained_audio_streams(tmp_path: Pat
     assert graph.count("[0:3]atrim=") == len(timeline.clips)
     assert "[0:4]" not in graph
     assert "amix=inputs=2" in graph
+    assert "HEROIC" in graph
+    assert "25 PLAYER" in graph
 
 
 def test_preview_command_maps_only_filtered_review_outputs(tmp_path: Path) -> None:

@@ -79,6 +79,126 @@ class DetectionConfig(StrictModel):
     recording_started_at: datetime | None = None
 
 
+class DifficultyConfig(StrictModel):
+    """Per-winning-pull difficulty classification and scoreline rules."""
+
+    enabled: bool = True
+    raid_size: Literal[10, 25] | None = None
+    expected_bosses: int | None = Field(default=None, gt=0, le=100)
+    title_raid_abbreviation: str | None = Field(default=None, min_length=1, max_length=20)
+    require_confirmed_for_auto_title: bool = True
+
+
+class HighlightConfig(StrictModel):
+    """Review-first funny, reaction, movement, and intensity candidate generation."""
+
+    enabled: bool = True
+    manual_selection: Path | None = None
+    review_clip_seconds: float = Field(default=45.0, gt=5, le=180)
+    lead_in_seconds: float = Field(default=25.0, ge=0, le=120)
+    lead_out_seconds: float = Field(default=15.0, ge=0, le=120)
+    maximum_candidates: int = Field(default=12, ge=1, le=50)
+    minimum_spacing_seconds: float = Field(default=30.0, ge=0, le=600)
+    fusion_window_seconds: float = Field(default=8.0, gt=0, le=60)
+    minimum_score: float = Field(default=0.30, ge=0, le=1)
+    discord_rms_threshold_db: float = Field(default=-27.0, ge=-100, le=0)
+    game_rms_threshold_db: float = Field(default=-20.0, ge=-100, le=0)
+    motion_scene_threshold: float = Field(default=0.12, ge=0.001, le=1)
+    motion_sample_fps: float = Field(default=2.0, gt=0, le=10)
+    motion_keyframes_only: bool = True
+    include_kill_climaxes: bool = True
+    keep_game_audio: bool = True
+    keep_discord_audio: bool = True
+    vertical_resolution: str = "1080x1920"
+    hardware_encoding: bool = True
+
+    @field_validator("vertical_resolution")
+    @classmethod
+    def vertical_resolution_must_be_dimensions(cls, value: str) -> str:
+        parts = value.lower().split("x")
+        if len(parts) != 2 or not all(part.isdigit() and int(part) > 0 for part in parts):
+            raise ValueError("vertical_resolution must use WIDTHxHEIGHT")
+        if int(parts[0]) >= int(parts[1]):
+            raise ValueError("vertical_resolution must be portrait")
+        return value.lower()
+
+
+class PreflightConfig(StrictModel):
+    """Expected OBS and recording conditions for the Friday smoke check."""
+
+    enabled: bool = True
+    obs_profile_dir: str | None = "WoW_Raid_1440p60"
+    obs_scene_collection_file: str | None = "WoW_Raid_Recording.json"
+    expected_scene: str | None = "WoW Raid"
+    expected_resolution: str = "2560x1440"
+    expected_fps: int = Field(default=60, gt=0, le=120)
+    minimum_free_space_gib: float = Field(default=150.0, ge=1)
+    combat_log_max_age_minutes: float = Field(default=30.0, gt=0)
+    require_fresh_combat_log: bool = True
+    smoke_recording_max_age_minutes: float = Field(default=30.0, gt=0)
+    smoke_recording_min_seconds: float = Field(default=5.0, gt=0, le=120)
+    smoke_recording_max_seconds: float = Field(default=120.0, gt=5, le=600)
+    required_recording_tracks: dict[int, str] = Field(
+        default_factory=lambda: {
+            1: "Full Mix",
+            2: "WoW Game",
+            3: "Discord",
+            4: "Microphone",
+        }
+    )
+    required_source_tracks: dict[str, list[int]] = Field(
+        default_factory=lambda: {
+            "WoW Audio": [1, 2],
+            "Discord Audio": [1, 3],
+            "Mic/Aux": [1, 4],
+        }
+    )
+    required_scene_sources: list[str] = Field(
+        default_factory=lambda: ["WoW", "WebCam", "WebCam Border"]
+    )
+
+    @field_validator("expected_resolution")
+    @classmethod
+    def expected_resolution_must_be_dimensions(cls, value: str) -> str:
+        parts = value.lower().split("x")
+        if len(parts) != 2 or not all(part.isdigit() and int(part) > 0 for part in parts):
+            raise ValueError("expected_resolution must use WIDTHxHEIGHT")
+        return value.lower()
+
+    @field_validator("required_recording_tracks")
+    @classmethod
+    def recording_tracks_must_be_obs_track_numbers(cls, value: dict[int, str]) -> dict[int, str]:
+        if any(track < 1 or track > 6 for track in value):
+            raise ValueError("required recording track numbers must be between 1 and 6")
+        return value
+
+    @field_validator("required_source_tracks")
+    @classmethod
+    def source_tracks_must_be_obs_track_numbers(
+        cls, value: dict[str, list[int]]
+    ) -> dict[str, list[int]]:
+        if any(track < 1 or track > 6 for tracks in value.values() for track in tracks):
+            raise ValueError("required source track numbers must be between 1 and 6")
+        return value
+
+    @model_validator(mode="after")
+    def smoke_duration_range_must_be_ordered(self) -> PreflightConfig:
+        if self.smoke_recording_max_seconds <= self.smoke_recording_min_seconds:
+            raise ValueError("smoke_recording_max_seconds must exceed the minimum")
+        return self
+
+
+class ArchiveConfig(StrictModel):
+    """Copy-only verified archive settings. Source deletion is never supported."""
+
+    enabled: bool = False
+    destination: Path | None = None
+    include_raw_recording: bool = True
+    include_final_master: bool = True
+    include_project_artifacts: bool = True
+    require_public_1440p_verified: bool = True
+
+
 class EditingConfig(StrictModel):
     include_trash_pulls: bool = True
     include_boss_wipes: bool = True
@@ -173,6 +293,8 @@ class YouTubeConfig(StrictModel):
     enabled: bool = False
     client_secrets: Path | None = None
     token: Path | None = None
+    management_token: Path | None = None
+    analytics_token: Path | None = None
     privacy_status: Literal["private", "unlisted", "public"] = "private"
     category_id: str = "20"
     category_name: str = Field(default="Gaming", max_length=100)
@@ -192,6 +314,13 @@ class YouTubeConfig(StrictModel):
     api_project_verified_for_public: bool = False
     forbid_em_dash: bool = True
     chunk_size_mib: int = Field(default=16, ge=1, le=256)
+    thumbnail_variants: int = Field(default=3, ge=1, le=3)
+    selected_thumbnail_variant: int = Field(default=1, ge=1, le=3)
+    playlist_auto_add: bool = True
+    playlist_id: str | None = Field(default=None, min_length=1, max_length=100)
+    playlist_title: str | None = Field(default="Pizza Warriors Weekly ICC Clears", max_length=150)
+    playlist_privacy_status: Literal["private", "unlisted", "public"] = "public"
+    analytics_enabled: bool = True
 
     @field_validator("hashtags")
     @classmethod
@@ -210,6 +339,8 @@ class YouTubeConfig(StrictModel):
             raise ValueError("enabled YouTube uploads require client_secrets and token paths")
         if self.game_title is not None and self.category_id != "20":
             raise ValueError("a YouTube game title requires the Gaming category ID 20")
+        if self.selected_thumbnail_variant > self.thumbnail_variants:
+            raise ValueError("selected_thumbnail_variant exceeds thumbnail_variants")
         if self.forbid_em_dash:
             copy_values = [
                 self.title,
@@ -230,8 +361,12 @@ class ProjectConfig(StrictModel):
     input: InputConfig
     audio: AudioConfig
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
+    difficulty: DifficultyConfig = Field(default_factory=DifficultyConfig)
+    highlights: HighlightConfig = Field(default_factory=HighlightConfig)
+    preflight: PreflightConfig = Field(default_factory=PreflightConfig)
     editing: EditingConfig = Field(default_factory=EditingConfig)
     music: MusicConfig
     preview: PreviewConfig = Field(default_factory=PreviewConfig)
     final: FinalConfig = Field(default_factory=FinalConfig)
     youtube: YouTubeConfig = Field(default_factory=YouTubeConfig)
+    archive: ArchiveConfig = Field(default_factory=ArchiveConfig)

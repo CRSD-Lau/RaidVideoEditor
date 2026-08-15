@@ -1,12 +1,18 @@
 # Raid Video Editor architecture
 
-**Status:** implemented review-first workflow, reconciled with source and tests on 2026-08-01
+**Status:** implemented review-first workflow, reconciled with source and tests on 2026-08-15
 **Runtime:** Windows, CPython 3.12, local command-line workflow  
 **Entry point:** `raid-editor`
 
 ## 1. Scope
 
-Raid Video Editor condenses one local World of Warcraft raid recording into a review edit. It inspects media, makes the audio tracks reviewable, excludes a separately recorded microphone stream, derives pull candidates from local combat evidence, lets the operator replace those candidates with a reviewed list, builds a neutral timeline, exports FCPXML and a Resolve bridge payload, renders a review preview, and can render and upload an explicitly approved final master.
+Raid Video Editor condenses one local World of Warcraft raid recording into a
+reviewed full-clear movie and optional portrait highlights. It verifies OBS,
+inspects media, makes audio tracks reviewable, excludes a separately recorded
+microphone stream, derives pull candidates from local combat evidence, labels
+ICC Normal/Heroic modes, proposes noteworthy social moments, builds a neutral
+timeline, exports FCPXML and a Resolve bridge payload, renders review media, and
+can render and upload an explicitly approved final master.
 
 The implementation is review-first rather than autonomous. It does not understand gameplay or remove speech from a mixed track. Final rendering and YouTube transmission are separate approval-gated stages; uploads default to Private and Public requires an additional approval.
 
@@ -14,14 +20,19 @@ The implementation is review-first rather than autonomous. It does not understan
 
 ```mermaid
 flowchart LR
-    C["Project YAML"] --> I["inspect"]
+    C["Project YAML"] --> B["preflight"]
+    B --> I["inspect"]
     V["One recording"] --> I
     I --> P["FFprobe model and audio samples"]
     P --> A["analyse / review"]
     L["Combat log"] --> A
     S["Optional Skada export"] --> A
     M["Optional full-list manual overrides"] --> A
-    A --> T["build-timeline"]
+    A --> D["Difficulty evidence and full-pull review"]
+    D --> T["build-timeline"]
+    D --> K["analyse-highlights"]
+    K --> KR["40-second game + Discord review"]
+    KR --> KS["render-highlights --approved"]
     T --> J["Timeline JSON, SRT, chapters"]
     T --> F["FCPXML 1.10"]
     T --> R["Resolve payload and Python 3.13 helper"]
@@ -33,6 +44,10 @@ flowchart LR
     Z --> H["render-final --approved"]
     H --> Y["upload-youtube --dry-run"]
     Y --> O["upload-youtube --approved\nPrivate by default"]
+    O --> PC["confirm publication"]
+    PC --> PL["sync playlist"]
+    PC --> AN["read-only analytics"]
+    PC --> AR["copy-only archive"]
 ```
 
 The normal operator sequence is:
@@ -42,6 +57,7 @@ uv run raid-editor inspect config\my-raid.local.yaml --open-review
 uv run raid-editor analyse config\my-raid.local.yaml
 uv run raid-editor review config\my-raid.local.yaml
 # Save the downloaded pull-overrides.json and reference it from input.manual_pulls.
+uv run raid-editor analyse-highlights config\my-raid.local.yaml --open
 uv run raid-editor build-timeline config\my-raid.local.yaml
 uv run raid-editor render-preview config\my-raid.local.yaml
 uv run raid-editor validate config\my-raid.local.yaml
@@ -64,6 +80,9 @@ The implemented commands are:
 | `inspect TARGET` | Probe a YAML project or an ad hoc recording; optionally create audio samples and an audio-role page. |
 | `analyse CONFIG` | Detect or load pulls; write JSON, CSV, issues, uncertainty reports, thumbnails, clips, and review HTML. |
 | `review CONFIG` | Rebuild and optionally open the pull-review page. |
+| `analyse-highlights CONFIG` | Fuse motion, game/Discord energy, combat pressure, and boss climaxes into unapproved review candidates. |
+| `render-highlights CONFIG --approved` | Render only explicitly selected portrait clips with game/Discord audio and hard microphone exclusion. |
+| `prepare-weekly CONFIG` | Prepare both review gates without rendering a final or transmitting anything. |
 | `build-timeline CONFIG` | Build timeline artifacts, microphone-free sidecar, FCPXML, and Resolve payload. |
 | `create-resolve-project CONFIG` | Invoke the isolated Python 3.13 Resolve helper; supports `--dry-run`. |
 | `render-preview CONFIG` | Build dependencies and render the configured review MP4; supports `--dry-run`. |
@@ -71,6 +90,12 @@ The implemented commands are:
 | `upload-youtube CONFIG --dry-run` | Generate reviewable upload metadata, chapters, and thumbnail with no authentication or transmission. |
 | `upload-youtube CONFIG --approved` | Full-hash and resumably upload the validated master, Private by default. Public also requires `--public-approved`. |
 | `validate CONFIG` | Rebuild required artifacts and run the bounded validation checks. |
+| `preflight CONFIG` | Read-only OBS profile, scene, track-routing, disk, combat-log, and smoke-recording checks. |
+| `confirm-youtube-publication CONFIG --approved` | Record operator-confirmed public 1440p playback evidence and hashes. |
+| `sync-playlist CONFIG --approved` | Idempotently create/find the configured playlist and add the approved video. |
+| `youtube-analytics CONFIG` | Write read-only summary and retention reports for the approved video. |
+| `archive-plan CONFIG` | Enumerate the copy-only archive set without hashing or copying. |
+| `archive CONFIG --approved` | Copy to a separate destination and verify every file with SHA-256; never delete source data. |
 | `wizard [CONFIG]` | Create a local YAML interactively or reopen an existing guided workflow. |
 
 There are no `init`, `doctor`, `audio`, `sync`, `pulls`, `music`, `status`, lock-recovery, or standalone export commands.
@@ -91,19 +116,26 @@ The durable configuration sections are:
 - `music`: registry path and explicitly approved IDs.
 - `preview`: resolution, frame rate, bitrate, hardware choice, watermark, and presentation cards.
 - `final`: source/explicit geometry and frame rate, codec, quality, preset, hardware choice, and audio bitrate.
-- `youtube`: local OAuth paths, visibility, title/description/tags, audience, and chunk size.
+- `difficulty`: supported raid sizes, expected bosses, and title blocking rules.
+- `highlights`: signal thresholds, review context, Discord retention, and portrait output.
+- `preflight`: expected OBS profile, collection, scene, geometry, track routes, and smoke bounds.
+- `youtube`: separate OAuth paths, visibility, metadata, thumbnail variants, playlist, and analytics behavior.
+- `archive`: copy destination, included artifact classes, and public-1440p gate.
 
 Generated work is placed under `output/<project-name-slug>/`:
 
 ```text
 analysis/          media-probe.json, analysis manifest, pull JSON/CSV, parser issues
 review/            static HTML, WAV samples, thumbnails, sample or full-pull MP4 clips
+highlights/         ranked candidates, full review clips, approved portrait exports
 timeline/          timeline.json, timeline.fcpxml, pull-labels.srt
 generated-assets/  source-microphone-free.mov and its JSON manifest
 preview/           review MP4, FFmpeg filter script, render manifest
 final/             explicitly approved master, FFmpeg filter script, validation manifest
-youtube/           metadata, chapters, thumbnail, checklist, and upload manifest
-reports/           chapters, uncertainty, music, audio, edit, validation reports
+youtube/           metadata, chapters, thumbnails, playlist plan, and upload manifest
+analytics/         read-only summary and retention reports
+archive/           copy-only plan and, outside output, an approved verified copy
+reports/           difficulty, highlights, chapters, audio, edit, and validation reports
 resolve/           create-project.json
 ```
 
@@ -215,7 +247,10 @@ The pull review includes a thumbnail, a configurable sample or full winning-take
 - Retained audio indexes and excluded microphone index.
 - Label, pull type/result, transition labels, and contributing pull IDs.
 
-The builder applies pre/post-roll, source bounds, include policy, short-gap trash merging, and overlap trimming. Included clips are placed contiguously in chronological order. No highlight scoring, beat matching, or gameplay-aware reordering occurs.
+The builder applies pre/post-roll, source bounds, include policy, short-gap
+trash merging, and overlap trimming. Included clips are placed contiguously in
+chronological order. Social highlight scoring is a separate advisory lane and
+never reorders or changes the full movie timeline.
 
 Frame-bound outputs use Python `round(seconds * fps)`. FCPXML time denominators use `round(fps)`. This is adequate for the current integer-frame-rate fixture but is not an exact rational representation of rates such as 30000/1001.
 
@@ -274,7 +309,7 @@ Selected IDs must exist. Before use, the tool requires all three permission flag
 
 The MVP uses only the first approved track. It loops that track as a low-level preview-only bed at volume 0.16 with two-second fades. Music is not placed in FCPXML or the Resolve project. The registry does not currently store a separate licence-receipt file/hash, expiry, revocation, or per-placement edit instructions.
 
-## 10. Preview, final-render, and YouTube gates
+## 10. Preview, final-render, social, and YouTube gates
 
 `render-preview` uses a generated FFmpeg filter script to:
 
@@ -316,6 +351,24 @@ uploader uses a local desktop OAuth token, the
 and a local manifest that prevents re-uploading the same recorded master. It
 applies the generated custom thumbnail when the channel permits it.
 
+`analyse-highlights` scans game and Discord energy independently, samples visual
+motion, counts nearby raid deaths, and adds boss-kill climax signals. Nearby
+signals are fused into ranked funny, reaction, movement, clutch, or intense
+candidates. Every candidate defaults to excluded. Its review media uses game
+plus Discord audio with a hard microphone refusal. `render-highlights` requires
+`--approved` and renders only `include: true` candidates; it has no social-media
+upload implementation.
+
+Difficulty classification aggregates boss-specific spell evidence per winning
+pull. Unique evidence yields `10N`, `10H`, `25N`, or `25H`; conflicting or
+missing evidence remains `UNKNOWN`. Unknown difficulty can block the automatic
+Heroic scoreline instead of guessing.
+
+Playlist synchronization, publication confirmation, and archive copying each
+have separate approval gates. Analytics are read-only. The archive is copy-only,
+uses a staged destination, and verifies every source/destination SHA-256 before
+the final directory rename.
+
 ## 11. Reuse, resume, and file safety
 
 The MVP has several small idempotency mechanisms rather than a general stage engine:
@@ -327,6 +380,9 @@ The MVP has several small idempotency mechanisms rather than a general stage eng
 - Final: an explicit approval manifest plus post-render validation.
 - YouTube: full final-master and metadata hashes plus the returned video ID; changed metadata for an already recorded master is blocked rather than duplicated.
 - Review assets: reused when their expected path already exists.
+- Highlight analysis: schema/version and input fingerprints invalidate stale candidates.
+- Playlist insertion: existing membership is checked before mutation.
+- Archive: an existing destination is a hard refusal; partial copies remain visibly staged.
 
 There is no content-addressed cache, cache-status command, dependency graph, lock file, stale-lock recovery, quarantine, or general resume coordinator.
 
@@ -346,6 +402,9 @@ Source paths are never passed as output destinations by the normal workflow. YAM
 - The preview exists and FFprobe can read it.
 - Final rendering remains behind a recorded explicit approval gate.
 - YouTube upload remains behind a separate approval gate, with an additional Public gate.
+- Classified scorelines contain no unresolved boss difficulty.
+- Highlight rendering excludes the configured microphone and includes only reviewed selections.
+- Publication confirmation records matching source/metadata hashes and 1440p playback.
 
 These checks are useful but bounded. They do not prove microphone absence within retained mixed audio, byte-for-byte source identity, watermark presence, exact NLE import behavior, or subjective edit quality.
 
@@ -357,7 +416,7 @@ The MVP does not promise byte-identical media or strict byte-stable JSON/XML acr
 
 ## 14. Tested baseline
 
-At reconciliation time, the suite contains 87 passing tests. Coverage includes:
+At reconciliation time, the suite contains 107 passing tests. Coverage includes:
 
 - Strict YAML and audio-role safety.
 - Combat-log parsing, offsets, year rollover, malformed rows, boss/trash separation, and source bounds.
@@ -368,6 +427,9 @@ At reconciliation time, the suite contains 87 passing tests. Coverage includes:
 - Sidecar stream mapping and source non-modification.
 - Resolve payload safety and isolated Python 3.13 invocation.
 - YouTube credential-path safety, metadata/chapters, upload approval, custom thumbnail application, and duplicate prevention.
+- Heroic/Normal evidence consensus, unknown blocking, and exact scoreline titles.
+- Highlight fusion, Lich King reservation, keyframe motion sampling, approvals, and microphone exclusion.
+- OBS preflight secret-file refusal, copy-only archives, playlist idempotency, and retention reports.
 - A synthetic `render-preview --dry-run` journey proving expected artifacts and an unchanged quick source fingerprint.
 
 In addition, a real non-dry-run synthetic 1280x720 preview completed successfully through FFmpeg 8, FFprobe read the result, and `validate` passed. A new Resolve 20.3.2 GUI project then imported the synthetic FCPXML and microphone-free sidecar as a 24-second, three-clip timeline. Final Cut import, the external Resolve API bridge, real HEVC-sidecar import, and real-raid editorial quality remain unproven.
@@ -384,7 +446,10 @@ The following are **not implemented** and must not be described as current behav
 - DTD/`lxml` FCPXML validation and a maintained multi-version NLE compatibility matrix.
 - A persistent `REVIEW — NOT FINAL` watermark or cryptographic approval gate.
 - Multi-recording projects, proxy workflows, or custom Resolve bins.
-- CV/OCR pull detection, speech recognition, source separation, highlight ranking, beat-aware editing, or other AI assistance.
-- Automatic visibility changes, remote metadata editing, multi-platform publishing, a cloud service, or a remote asset downloader.
+- CV/OCR pull detection, speech recognition, source separation, semantic humor
+  understanding, beat-aware editing, or generative edit decisions. Current
+  highlight ranking is deterministic signal fusion only.
+- Automatic visibility changes, remote metadata editing, TikTok/Shorts
+  publishing, a cloud service, or a remote asset downloader.
 
 These are candidates for later hardening phases. Any CV or AI addition must remain advisory, preserve evidence and model/version provenance, and require human acceptance.

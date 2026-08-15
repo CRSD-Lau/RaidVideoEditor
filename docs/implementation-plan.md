@@ -1,5 +1,13 @@
 # Raid Video Editor implementation plan
 
+> Historical planning artifact. The current implementation has advanced beyond
+> several items originally marked deferred. Use [Architecture](architecture.md)
+> and the [root README](../README.md) for current behavior.
+
+> Historical planning artifact. The current implementation has advanced beyond
+> several items originally marked deferred. Use [Architecture](architecture.md)
+> and the [root README](../README.md) for current behavior.
+
 **Status:** MVP implemented; this document separates delivered behavior from deferred hardening  
 **Architecture:** [architecture.md](architecture.md)  
 **Decisions:** [decision-log.md](decision-log.md)

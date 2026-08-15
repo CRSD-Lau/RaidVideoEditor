@@ -116,6 +116,8 @@ def build_timeline(
                 label=_label(window),
                 type=window.pulls[0].type,
                 result=window.pulls[0].result,
+                encounter=window.pulls[0].encounter,
+                difficulty=(window.pulls[0].difficulty if len(window.pulls) == 1 else "UNKNOWN"),
                 transition_in=transition if index > 0 else None,
                 transition_out=transition if index < len(windows) - 1 else None,
                 pull_ids=[pull.id for pull in window.pulls],

@@ -52,6 +52,11 @@ def load_project_config(path: Path) -> ProjectConfig:
     normalized_music = config.music.model_copy(
         update={"library": _absolute(base, config.music.library)}
     )
+    normalized_highlights = config.highlights.model_copy(
+        update={
+            "manual_selection": _absolute(base, config.highlights.manual_selection),
+        }
+    )
     normalized_preview = config.preview
     if config.preview.watermark is not None:
         normalized_preview = config.preview.model_copy(
@@ -62,7 +67,15 @@ def load_project_config(path: Path) -> ProjectConfig:
             }
         )
     normalized_youtube = config.youtube
-    if config.youtube.client_secrets is not None or config.youtube.token is not None:
+    if any(
+        path is not None
+        for path in (
+            config.youtube.client_secrets,
+            config.youtube.token,
+            config.youtube.management_token,
+            config.youtube.analytics_token,
+        )
+    ):
         normalized_youtube = config.youtube.model_copy(
             update={
                 "client_secrets": (
@@ -75,14 +88,29 @@ def load_project_config(path: Path) -> ProjectConfig:
                     if config.youtube.token is not None
                     else None
                 ),
+                "management_token": (
+                    _absolute(base, config.youtube.management_token)
+                    if config.youtube.management_token is not None
+                    else None
+                ),
+                "analytics_token": (
+                    _absolute(base, config.youtube.analytics_token)
+                    if config.youtube.analytics_token is not None
+                    else None
+                ),
             }
         )
+    normalized_archive = config.archive.model_copy(
+        update={"destination": _absolute(base, config.archive.destination)}
+    )
     return config.model_copy(
         update={
             "input": normalized_input,
             "music": normalized_music,
+            "highlights": normalized_highlights,
             "preview": normalized_preview,
             "youtube": normalized_youtube,
+            "archive": normalized_archive,
         }
     )
 

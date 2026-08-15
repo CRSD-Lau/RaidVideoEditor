@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from raid_editor.config.models import ProjectConfig
-from raid_editor.models import TimelineClip, TimelineDocument
+from raid_editor.models import PullCandidate, TimelineClip, TimelineDocument
 from raid_editor.youtube import upload as youtube_upload
 from raid_editor.youtube.upload import YouTubeUploadError
 
@@ -37,6 +37,7 @@ def _config(tmp_path: Path) -> ProjectConfig:
                 "enabled": True,
                 "client_secrets": str(tmp_path / "youtube-client.local.json"),
                 "token": str(tmp_path / "youtube-token.local.json"),
+                "title": "Icecrown Citadel Full Raid Clear | Pizza Warriors WoW WotLK",
                 "privacy_status": "private",
                 "tags": ["World of Warcraft", "Pizza Warriors"],
                 "category_name": "Gaming",
@@ -81,7 +82,7 @@ def _package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> youtube_upload.
     video = tmp_path / "raid.mp4"
     video.write_bytes(b"approved-final-master")
 
-    def fake_thumbnail(_video: Path, destination: Path) -> None:
+    def fake_thumbnail(_video: Path, destination: Path, **_options: object) -> None:
         destination.write_bytes(b"jpeg")
 
     monkeypatch.setattr(youtube_upload, "_create_thumbnail", fake_thumbnail)
@@ -133,6 +134,73 @@ def test_youtube_package_contains_title_chapters_and_private_metadata(
     assert package.thumbnail.read_bytes() == b"jpeg"
 
 
+def test_youtube_package_builds_confirmed_scoreline_chapters_and_three_thumbnails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video = tmp_path / "raid.mp4"
+    video.write_bytes(b"approved-final-master")
+    bosses = [
+        "Lord Marrowgar",
+        "Lady Deathwhisper",
+        "Gunship Battle",
+        "Deathbringer Saurfang",
+        "Festergut",
+        "Rotface",
+        "Professor Putricide",
+        "Blood Prince Council",
+        "Blood-Queen Lana'thel",
+        "Valithria Dreamwalker",
+        "Sindragosa",
+        "The Lich King",
+    ]
+    heroic_indexes = {1, 3, 4, 5, 6, 8, 10}
+    pulls = [
+        PullCandidate(
+            id=f"pull-{index:03d}",
+            start_seconds=index * 100,
+            end_seconds=index * 100 + 80,
+            type="boss_kill",
+            encounter=boss,
+            result="kill",
+            difficulty="25H" if index in heroic_indexes else "25N",
+            difficulty_confidence="high",
+        )
+        for index, boss in enumerate(bosses, start=1)
+    ]
+
+    def fake_thumbnail(_video: Path, destination: Path, **_options: object) -> None:
+        destination.write_bytes(b"jpeg")
+
+    monkeypatch.setattr(youtube_upload, "_create_thumbnail", fake_thumbnail)
+    base = _config(tmp_path)
+    config = base.model_copy(
+        update={
+            "youtube": base.youtube.model_copy(update={"title": None}),
+            "difficulty": base.difficulty.model_copy(
+                update={"expected_bosses": 12, "title_raid_abbreviation": "ICC"}
+            ),
+        }
+    )
+    package = youtube_upload.write_youtube_package(
+        config,
+        _timeline(tmp_path),
+        video,
+        tmp_path / "youtube-auto",
+        pulls=pulls,
+    )
+
+    metadata = json.loads(package.metadata.read_text(encoding="utf-8"))
+    chapters = package.chapters.read_text(encoding="utf-8")
+
+    assert metadata["title"] == ("ICC 25M 12/12 7HC Full Clear | Pizza Warriors WoW WotLK | Jul 31")
+    assert metadata["title_ready"] is True
+    assert "00:05 Lord Marrowgar (Heroic)" in chapters
+    assert "01:05 Lady Deathwhisper (Normal)" in chapters
+    assert len(package.thumbnail_candidates) == 3
+    assert all(path.read_bytes() == b"jpeg" for path in package.thumbnail_candidates)
+
+
 def test_youtube_upload_refuses_to_authenticate_without_explicit_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -165,6 +233,56 @@ def test_youtube_package_appends_required_music_attribution(
     assert "Example Track - Example Artist (CC BY 4.0)" in metadata["description"]
     assert package.root.joinpath("attribution.txt").read_text(encoding="utf-8") == (
         "Example Track — Example Artist (CC BY 4.0)\n"
+    )
+
+
+def test_publication_confirmation_records_operator_checked_1440p_for_archiving(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video = tmp_path / "raid.mp4"
+    video.write_bytes(b"approved-final-master")
+    base = _config(tmp_path)
+    config = base.model_copy(
+        update={"youtube": base.youtube.model_copy(update={"privacy_status": "public"})}
+    )
+
+    def fake_thumbnail(_video: Path, destination: Path, **_options: object) -> None:
+        destination.write_bytes(b"jpeg")
+
+    monkeypatch.setattr(youtube_upload, "_create_thumbnail", fake_thumbnail)
+    package = youtube_upload.write_youtube_package(
+        config,
+        _timeline(tmp_path),
+        video,
+        tmp_path / "youtube-public",
+    )
+
+    with pytest.raises(YouTubeUploadError, match="explicit approval"):
+        youtube_upload.record_publication_confirmation(
+            config,
+            package,
+            video_id="public123",
+            maximum_quality="1440p60",
+            approved=False,
+            report_destination=tmp_path / "publication.md",
+        )
+
+    payload = youtube_upload.record_publication_confirmation(
+        config,
+        package,
+        video_id="public123",
+        maximum_quality="1440p60",
+        approved=True,
+        report_destination=tmp_path / "publication.md",
+    )
+
+    assert payload["privacy_status"] == "public"
+    assert payload["public_playback_confirmed"] is True
+    assert payload["maximum_quality_confirmed"] == "1440p60"
+    assert payload["publication_confirmation_method"] == "operator_verified_watch_page"
+    assert "Remote verification: not performed" in tmp_path.joinpath("publication.md").read_text(
+        encoding="utf-8"
     )
 
 

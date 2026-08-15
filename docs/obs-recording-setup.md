@@ -6,32 +6,27 @@ Discord stream must already exist in the recording.
 
 ## Audited host configuration
 
-The active OBS profile was inspected on 2026-07-26.
+The read-only preflight inspected the active OBS configuration on 2026-08-15.
 
-| Setting | Current value |
+| Setting | Verified value |
 | --- | --- |
-| OBS version | 32.1.2 |
-| Output mode | Advanced |
-| Recording container | MOV |
-| Video encoder | AMD hardware HEVC |
-| Recording tracks | 1 through 6 enabled |
-| Video output | 1920x1080 at 60 fps |
-| Audio | 48 kHz stereo |
-| Filename pattern | `YYYY-MM-DD HH-MM-SS` |
-| Global sources | `Desktop Audio`, `Mic/Aux` |
-| Source routing | Both sources routed to every recording track |
+| Active profile | `WoW_Raid_1440p60` |
+| Scene collection | `WoW_Raid_Recording.json` |
+| Recording container | Hybrid MP4 |
+| Video output | 2560x1440 at 60 fps |
+| Recording path | `D:\RaidRecordings` |
+| Recording tracks | 1 Full Mix, 2 WoW Game, 3 Discord, 4 Microphone |
+| WoW source routing | Tracks 1 and 2 |
+| Discord source routing | Tracks 1 and 3 |
+| Mic/Aux routing | Tracks 1 and 4 |
 
-The active profile reports 1920x1080, but the audited 2026-07-24 MOV is
-900x1600 portrait at 60 fps. Make a new test recording before relying on the
-current profile's dimensions. The MVP preview preserves aspect ratio and pads
-to the configured frame; it does not rotate, crop, or creatively reframe.
+This gives the editor a microphone-free game stem for the full movie and a
+separate Discord stem for reviewed social highlights. Track 1 is still a
+reference mix and must not be used when microphone exclusion is required.
 
-The container has six audio tracks, but the current routing sends both desktop
-sound and the microphone to all six. Those tracks are not independently useful
-for microphone removal. Do not assume that “six tracks” means “six separate
-sources.” The existing long recording can still be inspected and used for pull
-review, but it must not be forced through microphone-free timeline creation by
-pretending a mixed track is safe.
+The same check found two operational blockers, not configuration corruption:
+`Full Cam` was active instead of `WoW Raid`, and the combat log had not received
+a fresh event. Switch scenes and run `/combatlog` before recording.
 
 ## Required routing
 
@@ -107,7 +102,7 @@ compatibility can change.
 From `C:\Projects\RaidVideoEditor`:
 
 ```powershell
-uv run raid-editor inspect 'C:\Users\neil_\Videos\OBS microphone routing test.mov' --open-review
+uv run raid-editor inspect 'C:\Users\YourName\Videos\OBS microphone routing test.mov' --open-review
 ```
 
 The command prints absolute FFprobe stream indexes and generates three short WAV
@@ -139,6 +134,19 @@ audio:
 These example numbers are not universal. FFprobe counts all streams, including
 video, so always use the numbers printed for the actual recording.
 
+Then run the complete Friday preflight against that exact test file:
+
+```powershell
+uv run raid-editor preflight config\my-raid.local.yaml `
+  --smoke-recording 'D:\RaidRecordings\Friday smoke test.mp4'
+```
+
+The check fails closed on the expected profile, scene collection, program
+scene, 2560x1440 at 60 fps, recording path, disk reserve, Hybrid MP4/MKV,
+recording-track mask and labels, source routing, required visible sources, and
+fresh combat log. It probes the smoke file for matching geometry and audio
+labels. It never reads `service.json`, stream keys, or OAuth credentials.
+
 ## Fail-closed behavior
 
 Timeline creation stops when:
@@ -155,7 +163,10 @@ track that contains microphone speech.
 
 ## Pre-raid checklist
 
-- Make a 30–60 second test recording after changing any OBS profile.
+- Switch the program scene to `WoW Raid`.
+- Run `/combatlog` and create one fresh combat event.
+- Make a 10–30 second test recording after changing any OBS profile.
+- Run `preflight --smoke-recording` and resolve every failed row.
 - Run `inspect` and listen rather than trusting track names.
 - Confirm mic isolation on at least one game/Discord stream.
 - Confirm the OBS filename timestamp and Windows clock are correct.

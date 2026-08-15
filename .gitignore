@@ -16,11 +16,21 @@ config/project.yaml
 config/*.local.yaml
 config/*.local.json
 .env
+.env.*
+!.env.example
 *.token
 *.key
+*.pem
+*.p12
+*.pfx
 secrets/
 *.credentials.json
 *.oauth.json
+client_secret*.json
+credentials*.json
+oauth*.json
+service-account*.json
+token*.json
 
 # Source media and generated media
 *.mkv

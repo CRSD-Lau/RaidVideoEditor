@@ -30,6 +30,34 @@ detection:
   combat_log_offset_seconds: 0
   recording_started_at: "2026-07-26T20:00:00-03:00"
 
+difficulty:
+  enabled: false
+  raid_size: null
+  expected_bosses: null
+  title_raid_abbreviation: null
+  require_confirmed_for_auto_title: true
+
+highlights:
+  enabled: true
+  manual_selection: null
+  review_clip_seconds: 12
+  lead_in_seconds: 6
+  lead_out_seconds: 6
+  maximum_candidates: 4
+  minimum_spacing_seconds: 5
+  fusion_window_seconds: 3
+  minimum_score: 0.20
+  discord_rms_threshold_db: -30
+  game_rms_threshold_db: -30
+  motion_scene_threshold: 0.02
+  motion_sample_fps: 2
+  motion_keyframes_only: true
+  include_kill_climaxes: true
+  keep_game_audio: true
+  keep_discord_audio: true
+  vertical_resolution: "1080x1920"
+  hardware_encoding: false
+
 editing:
   include_trash_pulls: true
   include_boss_wipes: true

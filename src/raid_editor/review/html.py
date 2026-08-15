@@ -142,13 +142,16 @@ def generate_pull_review_page(
         title = pull.title or pull.encounter or pull.id
         preview_is_full = preview is not None and preview.stem.endswith("-full")
         preview_label = "Full winning take" if preview_is_full else "Review sample"
-        jump_links.append(
-            f'<a href="#{html.escape(pull.id)}">{html.escape(title)}</a>'
+        difficulty_class = (
+            "unknown"
+            if pull.difficulty == "UNKNOWN"
+            else ("heroic" if pull.difficulty.endswith("H") else "normal")
         )
+        jump_links.append(f'<a href="#{html.escape(pull.id)}">{html.escape(title)}</a>')
         rows.append(
             f"""
             <article class="pull" id="{html.escape(pull.id)}" data-id="{html.escape(pull.id)}">
-              <h2>{html.escape(title)}</h2>
+              <h2>{html.escape(title)} <span class="difficulty {difficulty_class}">{html.escape(pull.difficulty)}</span></h2>
               <div class="media">
                 <video controls playsinline preload="metadata" poster="{thumbnail_src}" src="{preview_src}"></video>
                 <p class="clip-meta">{preview_label} · {pull.duration_seconds:.1f} second core cut</p>
@@ -165,6 +168,10 @@ def generate_pull_review_page(
                    <strong>Result:</strong> {html.escape(pull.result)} ·
                    <strong>Confidence:</strong> {pull.confidence:.2f}</p>
                 <p><strong>Evidence:</strong> {html.escape(", ".join(pull.evidence) or "None")}</p>
+                <p><strong>Difficulty:</strong> {html.escape(pull.difficulty)} ·
+                   <strong>Difficulty confidence:</strong> {html.escape(pull.difficulty_confidence)}<br>
+                   <strong>Reason:</strong> {html.escape(pull.difficulty_reason or "No supported evidence yet")}<br>
+                   <strong>Difficulty evidence:</strong> {html.escape(", ".join(pull.difficulty_evidence) or "None")}</p>
               </details>
             </article>
             """
@@ -186,6 +193,10 @@ def generate_pull_review_page(
     nav a {{ flex: 0 0 auto; padding: .45rem .65rem; color: #f6f3ea; background: #273244; border-radius: .35rem; text-decoration: none; }}
     .pull {{ margin: 1.2rem 0; padding: 1rem; scroll-margin-top: 12rem; background: #1c232d; border: 1px solid #3c4656; border-radius: .7rem; }}
     .pull h2 {{ margin-top: 0; }}
+    .difficulty {{ display: inline-block; margin-left: .45rem; padding: .22rem .5rem; border-radius: 999px; font-size: .72em; vertical-align: .15em; background: #4b5565; }}
+    .difficulty.heroic {{ background: #8a2f24; color: #fff1df; }}
+    .difficulty.normal {{ background: #244d75; color: #eaf5ff; }}
+    .difficulty.unknown {{ background: #715a1f; color: #fff4c7; }}
     .media video {{ display: block; width: 100%; max-height: 78vh; margin-bottom: .4rem; background: #080a0d; }}
     .clip-meta {{ color: #b9c8dc; }}
     details summary {{ cursor: pointer; padding: .6rem 0; font-weight: 700; }}

@@ -130,7 +130,7 @@ OBS Studio 32.1.2 is configured for:
 The latest audited recording is:
 
 ```text
-C:\Users\neil_\Videos\2026-07-24 23-19-12.mov
+C:\Users\YourName\Videos\2026-07-24 23-19-12.mov
 ```
 
 Its audited characteristics are:

@@ -31,12 +31,17 @@ def write_pull_candidates(
         "include",
         "title",
         "notes",
+        "difficulty",
+        "difficulty_confidence",
+        "difficulty_evidence",
+        "difficulty_reason",
     ]
     writer = csv.DictWriter(stream, fieldnames=fieldnames)
     writer.writeheader()
     for pull in pulls:
         row = pull.model_dump(mode="json")
         row["evidence"] = "; ".join(pull.evidence)
+        row["difficulty_evidence"] = "; ".join(pull.difficulty_evidence)
         writer.writerow(row)
     atomic_write_text(csv_path, stream.getvalue())
 
