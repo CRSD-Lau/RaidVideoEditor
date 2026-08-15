@@ -189,7 +189,7 @@ workflow](docs/youtube-upload.md).
 | Command | What it does |
 | --- | --- |
 | `inspect TARGET` | Probes a YAML project or recording and optionally creates audio samples. |
-| `analyse CONFIG` | Detects pulls and writes JSON, CSV, reports, thumbnails, and short review clips. |
+| `analyse CONFIG` | Detects pulls and writes JSON, CSV, reports, thumbnails, and configurable sample or full-pull review clips. |
 | `review CONFIG` | Regenerates and opens the local pull review. |
 | `build-timeline CONFIG` | Writes timeline JSON, SRT labels, chapters, FCPXML, Resolve payload, and the microphone-free MOV sidecar. |
 | `create-resolve-project CONFIG` | Attempts unique-project creation through the Python 3.13 Resolve bridge. Use `--dry-run` first. |
@@ -330,7 +330,7 @@ Each project writes to `output\<slug-from-project-name>\`:
 
 ```text
 analysis\          media probe, pull candidates, parser issues
-review\            local HTML, audio samples, thumbnails, short clips
+review\            local HTML, audio samples, thumbnails, sample or full-pull clips
 timeline\          timeline.json, timeline.fcpxml, pull-labels.srt
 generated-assets\  source-microphone-free.mov and its manifest
 preview\           review MP4, FFmpeg filter script, manifest

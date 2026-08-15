@@ -201,11 +201,22 @@ def analyse_project(
         destination=paths.reports / "analysis-summary.md",
     )
     if create_review_media:
+        full_pull_review = config.preview.review_clip_mode == "full"
         assets = generate_pull_media(
             config.input.recording,
             pulls,
             paths.review,
             config.audio.retained_stream_indexes(),
+            max_preview_seconds=(
+                None if full_pull_review else config.preview.review_clip_seconds
+            ),
+            lead_in_seconds=(
+                config.detection.pre_roll_seconds if full_pull_review else 0.0
+            ),
+            lead_out_seconds=(
+                config.detection.post_roll_seconds if full_pull_review else 0.0
+            ),
+            recording_duration_seconds=probe.duration_seconds,
         )
         generate_pull_review_page(
             pulls,

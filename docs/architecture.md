@@ -97,7 +97,7 @@ Generated work is placed under `output/<project-name-slug>/`:
 
 ```text
 analysis/          media-probe.json, analysis manifest, pull JSON/CSV, parser issues
-review/            static HTML, WAV samples, thumbnails, short MP4 clips
+review/            static HTML, WAV samples, thumbnails, sample or full-pull MP4 clips
 timeline/          timeline.json, timeline.fcpxml, pull-labels.srt
 generated-assets/  source-microphone-free.mov and its JSON manifest
 preview/           review MP4, FFmpeg filter script, render manifest
@@ -202,7 +202,7 @@ Skada boss segments replace overlapping base candidates. Successful or failed se
 
 Candidates are sorted and renumbered `pull-0001`, `pull-0002`, and so on after evidence is combined. IDs are stable only while the ordered candidate set remains unchanged.
 
-The pull review includes a thumbnail, a short preview clip, editable include/title/start/end/note fields, and supporting evidence. It downloads `pull-overrides.json`. That file is a replacement list of `PullCandidate` records, not a hash-bound operation log.
+The pull review includes a thumbnail, a configurable sample or full winning-take preview, editable include/title/start/end/note fields, and supporting evidence. Full previews include the configured lead-in and lead-out. It downloads `pull-overrides.json`. That file is a replacement list of `PullCandidate` records, not a hash-bound operation log.
 
 ## 7. Timeline model and exports
 

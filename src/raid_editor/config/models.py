@@ -124,6 +124,8 @@ class PreviewConfig(StrictModel):
     fps: int = Field(default=30, gt=0, le=120)
     bitrate: str = "4M"
     hardware_encoding: bool = False
+    review_clip_mode: Literal["sample", "full"] = "sample"
+    review_clip_seconds: float = Field(default=10.0, gt=0, le=600)
     watermark: WatermarkConfig | None = None
     presentation: PresentationConfig | None = None
 
