@@ -81,7 +81,7 @@ The implemented commands are:
 | `analyse CONFIG` | Detect or load pulls; write JSON, CSV, issues, uncertainty reports, thumbnails, clips, and review HTML. |
 | `review CONFIG` | Rebuild and optionally open the pull-review page. |
 | `analyse-highlights CONFIG` | Fuse motion, game/Discord energy, combat pressure, and boss climaxes into unapproved review candidates. |
-| `render-highlights CONFIG --approved` | Render only explicitly selected portrait clips with game/Discord audio and hard microphone exclusion. |
+| `render-highlights CONFIG --approved` | Render only explicitly selected portrait clips with the configured game, Discord, and optional microphone mix. |
 | `prepare-weekly CONFIG` | Prepare both review gates without rendering a final or transmitting anything. |
 | `build-timeline CONFIG` | Build timeline artifacts, microphone-free sidecar, FCPXML, and Resolve payload. |
 | `create-resolve-project CONFIG` | Invoke the isolated Python 3.13 Resolve helper; supports `--dry-run`. |
@@ -117,7 +117,7 @@ The durable configuration sections are:
 - `preview`: resolution, frame rate, bitrate, hardware choice, watermark, and presentation cards.
 - `final`: source/explicit geometry and frame rate, codec, quality, preset, hardware choice, and audio bitrate.
 - `difficulty`: supported raid sizes, expected bosses, and title blocking rules.
-- `highlights`: signal thresholds, review context, Discord retention, and portrait output.
+- `highlights`: signal thresholds, review context, game/Discord/microphone retention, and portrait output.
 - `preflight`: expected OBS profile, collection, scene, geometry, track routes, and smoke bounds.
 - `youtube`: separate OAuth paths, visibility, metadata, thumbnail variants, playlist, and analytics behavior.
 - `archive`: copy destination, included artifact classes, and public-1440p gate.
@@ -354,10 +354,12 @@ applies the generated custom thumbnail when the channel permits it.
 `analyse-highlights` scans game and Discord energy independently, samples visual
 motion, counts nearby raid deaths, and adds boss-kill climax signals. Nearby
 signals are fused into ranked funny, reaction, movement, clutch, or intense
-candidates. Every candidate defaults to excluded. Its review media uses game
-plus Discord audio with a hard microphone refusal. `render-highlights` requires
-`--approved` and renders only `include: true` candidates; it has no social-media
-upload implementation.
+candidates. Every candidate defaults to excluded. Its review media follows an
+explicit audio policy: game and Discord can be retained, and the separately
+mapped microphone can be added with `keep_microphone_audio: true`. The review
+cache fingerprints that policy so changes rebuild the media. `render-highlights`
+requires `--approved` and renders only `include: true` candidates; it has no
+social-media upload implementation.
 
 Difficulty classification aggregates boss-specific spell evidence per winning
 pull. Unique evidence yields `10N`, `10H`, `25N`, or `25H`; conflicting or
@@ -403,7 +405,7 @@ Source paths are never passed as output destinations by the normal workflow. YAM
 - Final rendering remains behind a recorded explicit approval gate.
 - YouTube upload remains behind a separate approval gate, with an additional Public gate.
 - Classified scorelines contain no unresolved boss difficulty.
-- Highlight rendering excludes the configured microphone and includes only reviewed selections.
+- Highlight rendering enforces the configured microphone-retention policy and includes only reviewed selections.
 - Publication confirmation records matching source/metadata hashes and 1440p playback.
 
 These checks are useful but bounded. They do not prove microphone absence within retained mixed audio, byte-for-byte source identity, watermark presence, exact NLE import behavior, or subjective edit quality.
@@ -416,7 +418,7 @@ The MVP does not promise byte-identical media or strict byte-stable JSON/XML acr
 
 ## 14. Tested baseline
 
-At reconciliation time, the suite contains 107 passing tests. Coverage includes:
+At reconciliation time, the suite contains 109 passing tests. Coverage includes:
 
 - Strict YAML and audio-role safety.
 - Combat-log parsing, offsets, year rollover, malformed rows, boss/trash separation, and source bounds.
@@ -428,7 +430,7 @@ At reconciliation time, the suite contains 107 passing tests. Coverage includes:
 - Resolve payload safety and isolated Python 3.13 invocation.
 - YouTube credential-path safety, metadata/chapters, upload approval, custom thumbnail application, and duplicate prevention.
 - Heroic/Normal evidence consensus, unknown blocking, and exact scoreline titles.
-- Highlight fusion, Lich King reservation, keyframe motion sampling, approvals, and microphone exclusion.
+- Highlight fusion, Lich King reservation, keyframe motion sampling, approvals, and explicit microphone retention.
 - OBS preflight secret-file refusal, copy-only archives, playlist idempotency, and retention reports.
 - A synthetic `render-preview --dry-run` journey proving expected artifacts and an unchanged quick source fingerprint.
 

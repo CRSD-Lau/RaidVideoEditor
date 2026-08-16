@@ -18,8 +18,9 @@ energy, game audio, motion changes, raid deaths, and kill climaxes into ranked
 suggestions. Those suggestions are never approved automatically.
 
 The full movie keeps game audio and excludes Discord and microphone tracks. The
-highlight lane may keep game plus Discord reactions, but still refuses the
-configured microphone stream. The editor also generates scoreline-aware YouTube
+separate highlight lane can explicitly mix game, Discord, and the creator's
+microphone for reaction clips after all three stems are verified. Microphone
+retention is off by default. The editor also generates scoreline-aware YouTube
 metadata, three thumbnail candidates, playlist and analytics helpers, and a
 copy-only hash-verified archive plan.
 
@@ -187,8 +188,10 @@ uv run raid-editor analyse-highlights config\my-raid.local.yaml --open
 uv run raid-editor render-highlights config\my-raid.local.yaml --approved
 ```
 
-Portrait exports retain game plus Discord reaction audio and exclude the
-microphone. They are posting packages only; no TikTok or Shorts upload occurs.
+Portrait exports follow the explicit highlight audio policy. Set
+`highlights.keep_microphone_audio: true` to retain the separately verified mic
+alongside game and Discord reactions. They are posting packages only; no TikTok
+or Shorts upload occurs.
 
 After watching and approving the complete preview, create the local final master:
 
@@ -259,7 +262,7 @@ uv run raid-editor archive config\my-raid.local.yaml --approved
 | `create-resolve-project CONFIG` | Attempts unique-project creation through the Python 3.13 Resolve bridge. Use `--dry-run` first. |
 | `render-preview CONFIG` | Renders only the configured review MP4. Use `--dry-run` to prepare artifacts without starting the MP4 render. |
 | `render-final CONFIG --approved` | Renders and validates the approved local master. The approval flag is mandatory; no upload occurs. |
-| `render-highlights CONFIG --approved` | Renders only selected portrait clips with game/Discord audio and a hard microphone exclusion. |
+| `render-highlights CONFIG --approved` | Renders only selected portrait clips with the configured game, Discord, and optional microphone mix. |
 | `upload-youtube CONFIG --dry-run` | Generates scoreline titles, difficulty chapters, three thumbnails, description, and checklists without authentication or transmission. |
 | `upload-youtube CONFIG --approved` | Hashes and resumably uploads the validated master. Visibility defaults to Private. Public API uploads require `--public-approved` and a verified API project; otherwise use Studio. |
 | `confirm-youtube-publication CONFIG --video-id ID --approved` | Records an operator-confirmed public watch page and 1440p/1440p60 result for the archive gate; performs no remote verification. |
@@ -333,6 +336,7 @@ highlights:
   minimum_score: 0.30
   keep_game_audio: true
   keep_discord_audio: true
+  keep_microphone_audio: false
   motion_keyframes_only: true
   vertical_resolution: "1080x1920"
 
@@ -416,9 +420,10 @@ archive:
 ```
 
 Audio numbers are absolute FFprobe stream indexes, not OBS track labels or
-zero-based audio ordinals. Always copy them from `inspect`. At least one
-non-microphone game/Discord stream must be retained. `mixed_track` is not used
-when `remove_microphone: true`.
+zero-based audio ordinals. Always copy them from `inspect`. The full movie still
+requires a microphone-free retained program stream, and `mixed_track` is not
+used when `remove_microphone: true`. Highlight review has a separate, explicit
+`keep_microphone_audio` policy and mixes the selected stems into one output track.
 
 `manual_pulls`, when set, becomes authoritative and bypasses combat-log and
 Skada detection. Otherwise the detector prefers explicit combat-boundary events.
@@ -485,7 +490,8 @@ guarded PowerShell example and the list of files that live outside `output`.
 - The current portrait source is fitted and padded, not automatically cropped,
   rotated, or reframed.
 - Microphone removal is track exclusion, not voice separation. A dedicated mic
-  track and at least one microphone-free program track are mandatory.
+  track and at least one microphone-free program track are mandatory for the
+  full movie. Highlight clips may opt into that verified mic stem separately.
 - Pull detection is evidence-based, not gameplay understanding. Damage-activity
   clusters are lower-confidence and unclassified; Skada evidence can still be
   misaligned.

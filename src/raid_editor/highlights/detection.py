@@ -393,7 +393,7 @@ def build_highlight_candidates(
                 encounter=encounter,
                 include=False,
                 title=title,
-                notes="Automatically proposed; review Discord audio and framing before approval.",
+                notes="Automatically proposed; review reaction audio and framing before approval.",
             )
         )
     ranked = sorted(candidates, key=lambda item: item.score, reverse=True)
@@ -442,7 +442,9 @@ def analyse_highlights(
         pulls: Reviewed and difficulty-labelled pull list.
         game_stream_index: Absolute game-audio stream index, when available.
         discord_stream_index: Absolute Discord-audio stream index, when available.
-        microphone_stream_index: Absolute microphone stream that must be excluded.
+        microphone_stream_index: Absolute microphone stream kept distinct from
+            game and Discord signal roles. It may be retained in review/export
+            mixes when explicitly enabled by settings.
         combat_log: Optional combat log for death-pressure signals.
         recording_started_at: Timestamp used to align combat evidence.
         recording_duration_seconds: Source duration used for bounds.
@@ -453,8 +455,8 @@ def analyse_highlights(
         Ranked, bounded, and unapproved highlight candidates.
 
     Raises:
-        HighlightAnalysisError: If microphone audio would be retained or an
-            FFmpeg signal pass fails.
+        HighlightAnalysisError: If the microphone is misconfigured as a game or
+            Discord signal source, or an FFmpeg signal pass fails.
     """
 
     if not settings.enabled:
@@ -468,7 +470,9 @@ def analyse_highlights(
         if enabled and stream is not None
     ]
     if microphone_stream_index is not None and microphone_stream_index in selected_audio:
-        raise HighlightAnalysisError("Highlight audio selection must not include the microphone")
+        raise HighlightAnalysisError(
+            "Highlight game/Discord signal roles must not include the microphone"
+        )
     signals: list[Signal] = []
     if settings.keep_discord_audio and discord_stream_index is not None:
         signals.extend(

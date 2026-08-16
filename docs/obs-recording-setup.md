@@ -134,6 +134,16 @@ audio:
 These example numbers are not universal. FFprobe counts all streams, including
 video, so always use the numbers printed for the actual recording.
 
+The full movie excludes the microphone. For weekly reaction-clip review, opt in
+only after confirming that track is the distinct labelled mic stem:
+
+```yaml
+highlights:
+  keep_game_audio: true
+  keep_discord_audio: true
+  keep_microphone_audio: true
+```
+
 Then run the complete Friday preflight against that exact test file:
 
 ```powershell

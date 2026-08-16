@@ -72,8 +72,8 @@ timeline, sidecar, report, manifest, payload, and filter files.
 | `review\audio-samples\*.wav` | Every inspected stream, including microphone speech |
 | `review\assets\*.mp4` | Gameplay and retained voice comms |
 | `review\pull-review.html` | Encounter names, notes, evidence, local media references |
-| `highlights\review\assets\*.mp4` | Full candidate windows with game and Discord audio |
-| `highlights\vertical\*.mp4` | Approved portrait exports with potentially private raid comms |
+| `highlights\review\assets\*.mp4` | Full candidate windows with configured game, Discord, and optional microphone audio |
+| `highlights\vertical\*.mp4` | Approved portrait exports with potentially private raid comms and creator microphone |
 | `timeline\timeline.fcpxml` | Absolute `file:` URI to the generated sidecar |
 | `resolve\create-project.json` | Absolute sidecar path, clip labels and ranges |
 | `reports\*` | Raid titles, detected encounters, audio names, music/license evidence |

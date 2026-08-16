@@ -1,4 +1,4 @@
-"""Explicitly approved portrait highlight export with mic-safe audio."""
+"""Explicitly approved portrait highlight export with policy-checked audio."""
 
 from __future__ import annotations
 
@@ -76,8 +76,9 @@ def render_vertical_highlights(
         recording: Source media file.
         candidates: Reviewed highlight candidates.
         destination: Managed portrait-export directory.
-        audio_stream_indexes: Absolute game/Discord streams to retain.
-        microphone_stream_index: Absolute microphone stream that must be absent.
+        audio_stream_indexes: Absolute game, Discord, and optionally microphone
+            streams to retain.
+        microphone_stream_index: Absolute configured microphone stream.
         settings: Portrait geometry and encoder policy.
         approved: Explicit operator approval for real rendering.
         dry_run: Write commands and manifests without invoking FFmpeg.
@@ -96,8 +97,20 @@ def render_vertical_highlights(
         )
     if not audio_stream_indexes:
         raise HighlightRenderError("Highlight export requires at least one approved audio track")
-    if microphone_stream_index is not None and microphone_stream_index in audio_stream_indexes:
-        raise HighlightRenderError("Refusing to include the configured microphone stream")
+    microphone_included = (
+        microphone_stream_index is not None and microphone_stream_index in audio_stream_indexes
+    )
+    if settings.keep_microphone_audio:
+        if microphone_stream_index is None:
+            raise HighlightRenderError(
+                "Microphone audio is enabled but no microphone stream is configured"
+            )
+        if not microphone_included:
+            raise HighlightRenderError(
+                "Microphone audio is enabled but the microphone stream is absent from the mix"
+            )
+    elif microphone_included:
+        raise HighlightRenderError("Refusing microphone audio without explicit configuration")
     approved_candidates = [candidate for candidate in candidates if candidate.include]
     if not approved_candidates:
         raise HighlightRenderError("No highlight candidates are marked include=true")
@@ -181,7 +194,11 @@ def render_vertical_highlights(
                 "source_start_seconds": candidate.start_seconds,
                 "source_end_seconds": candidate.end_seconds,
                 "audio_stream_indexes": audio_stream_indexes,
-                "excluded_microphone_stream_index": microphone_stream_index,
+                "microphone_stream_index": microphone_stream_index,
+                "microphone_included": microphone_included,
+                "excluded_microphone_stream_index": (
+                    None if microphone_included else microphone_stream_index
+                ),
                 "output": str(output.resolve()),
                 "command": command,
                 "rendered": not dry_run,

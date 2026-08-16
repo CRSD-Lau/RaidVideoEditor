@@ -176,7 +176,7 @@ def render_highlights_command(
     approved: bool = typer.Option(
         False,
         "--approved",
-        help="Confirm the selected highlight clips and Discord audio were reviewed.",
+        help="Confirm the selected highlight clips and configured reaction audio were reviewed.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:

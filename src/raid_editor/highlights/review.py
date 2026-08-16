@@ -8,7 +8,14 @@ import subprocess
 from pathlib import Path
 
 from raid_editor.models import HighlightCandidate
-from raid_editor.util.paths import atomic_write_text, ensure_directory
+from raid_editor.util.paths import (
+    atomic_write_json,
+    atomic_write_text,
+    ensure_directory,
+    quick_file_fingerprint,
+)
+
+_REVIEW_RENDER_SCHEMA_VERSION = 1
 
 
 class HighlightReviewError(RuntimeError):
@@ -59,13 +66,14 @@ def generate_highlight_review_media(
     *,
     audio_stream_indexes: list[int],
 ) -> dict[str, Path]:
-    """Render full-context review clips with only approved program streams.
+    """Render full-context review clips with the configured highlight mix.
 
     Args:
         recording: Source media file.
         candidates: Candidate windows to render.
         destination: Highlight review root.
-        audio_stream_indexes: Absolute non-microphone streams to retain and mix.
+        audio_stream_indexes: Absolute game, Discord, and optionally microphone
+            streams to retain and mix.
 
     Returns:
         Candidate IDs mapped to reusable local MP4 review files.
@@ -74,12 +82,38 @@ def generate_highlight_review_media(
         HighlightReviewError: If FFmpeg is missing or a review render fails.
     """
 
-    assets = ensure_directory(destination / "assets")
-    result: dict[str, Path] = {}
+    root = ensure_directory(destination)
+    assets = ensure_directory(root / "assets")
+    result = {candidate.id: assets / f"{candidate.id}.mp4" for candidate in candidates}
+    signature = {
+        "schema_version": _REVIEW_RENDER_SCHEMA_VERSION,
+        "recording": quick_file_fingerprint(recording),
+        "audio_stream_indexes": audio_stream_indexes,
+        "candidates": [
+            {
+                "id": candidate.id,
+                "start_seconds": candidate.start_seconds,
+                "end_seconds": candidate.end_seconds,
+            }
+            for candidate in candidates
+        ],
+    }
+    manifest_path = root / "render-manifest.json"
+    try:
+        current_signature = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current_signature = None
+    if current_signature == signature and all(clip.is_file() for clip in result.values()):
+        return result
+
     filter_args, audio_map = _audio_mix_filter(audio_stream_indexes)
-    for candidate in candidates:
-        clip = assets / f"{candidate.id}.mp4"
-        if not clip.is_file():
+    temporary_outputs: dict[Path, Path] = {}
+    try:
+        for candidate in candidates:
+            clip = result[candidate.id]
+            temporary = clip.with_name(f".{clip.stem}.rendering.mp4")
+            temporary.unlink(missing_ok=True)
+            temporary_outputs[clip] = temporary
             duration = candidate.end_seconds - candidate.start_seconds
             command = [
                 "ffmpeg",
@@ -111,10 +145,19 @@ def generate_highlight_review_media(
                 "-movflags",
                 "+faststart",
                 "-y",
-                str(clip),
+                str(temporary),
             ]
             _run(command)
-        result[candidate.id] = clip
+            if not temporary.is_file():
+                raise HighlightReviewError(
+                    f"FFmpeg reported success but did not create review media: {temporary}"
+                )
+        for clip, temporary in temporary_outputs.items():
+            temporary.replace(clip)
+        atomic_write_json(manifest_path, signature)
+    finally:
+        for temporary in temporary_outputs.values():
+            temporary.unlink(missing_ok=True)
     return result
 
 
@@ -123,7 +166,9 @@ def generate_highlight_review_page(
     assets: dict[str, Path],
     destination: Path,
     *,
+    includes_game: bool,
     includes_discord: bool,
+    includes_microphone: bool,
 ) -> None:
     """Write the local interactive highlight approval page.
 
@@ -131,7 +176,9 @@ def generate_highlight_review_page(
         candidates: Candidate metadata shown to the reviewer.
         assets: Candidate IDs mapped to local review clips.
         destination: HTML file destination.
+        includes_game: Whether the retained review mix contains game audio.
         includes_discord: Whether the retained review mix contains Discord.
+        includes_microphone: Whether the retained review mix contains microphone audio.
 
     Raises:
         KeyError: If a candidate has no matching review asset.
@@ -167,6 +214,14 @@ def generate_highlight_review_page(
     serialized = json.dumps(
         [candidate.model_dump(mode="json") for candidate in candidates]
     ).replace("</", "<\\/")
+    audio_mix = ", ".join(
+        f"{label} {'included' if included else 'excluded'}"
+        for label, included in (
+            ("game", includes_game),
+            ("Discord", includes_discord),
+            ("microphone", includes_microphone),
+        )
+    )
     document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -196,7 +251,7 @@ def generate_highlight_review_page(
   <header>
     <h1>Highlight candidates</h1>
     <p>These are ranked suggestions, not approvals. Watch each full clip and only select moments worth sharing.</p>
-    <p class="privacy">Discord audio is {"included" if includes_discord else "excluded"}. The microphone track remains excluded.</p>
+    <p class="privacy">Review audio mix: {audio_mix}.</p>
     <nav>{"".join(links)}</nav>
     <button id="download">Download highlight-overrides.json</button>
   </header>

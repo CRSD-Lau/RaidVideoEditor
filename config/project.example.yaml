@@ -55,6 +55,7 @@ highlights:
   include_kill_climaxes: true
   keep_game_audio: true
   keep_discord_audio: true
+  keep_microphone_audio: false
   vertical_resolution: "1080x1920"
   hardware_encoding: true
 
