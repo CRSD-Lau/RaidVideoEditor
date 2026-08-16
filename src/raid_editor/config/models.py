@@ -109,6 +109,7 @@ class HighlightConfig(StrictModel):
     include_kill_climaxes: bool = True
     keep_game_audio: bool = True
     keep_discord_audio: bool = True
+    keep_microphone_audio: bool = False
     vertical_resolution: str = "1080x1920"
     hardware_encoding: bool = True
 

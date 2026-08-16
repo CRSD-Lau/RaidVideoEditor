@@ -274,11 +274,19 @@ def _highlight_audio_streams(config: ProjectConfig) -> list[int]:
         indexes.append(config.audio.game_track)
     if config.highlights.keep_discord_audio and config.audio.discord_track is not None:
         indexes.append(config.audio.discord_track)
-    indexes = list(dict.fromkeys(indexes))
     if config.audio.microphone_track is not None and config.audio.microphone_track in indexes:
-        raise ValueError("Highlight audio must not include the configured microphone stream")
+        raise ValueError(
+            "The configured microphone stream cannot also be a highlight game/Discord stream"
+        )
+    if config.highlights.keep_microphone_audio:
+        if config.audio.microphone_track is None:
+            raise ValueError(
+                "Highlight microphone audio is enabled but audio.microphone_track is not configured"
+            )
+        indexes.append(config.audio.microphone_track)
+    indexes = list(dict.fromkeys(indexes))
     if not indexes:
-        raise ValueError("Highlight review requires game or Discord audio")
+        raise ValueError("Highlight review requires at least one enabled audio stream")
     return indexes
 
 
@@ -354,8 +362,15 @@ def analyse_highlights_project(
             candidates,
             assets,
             paths.highlights / "review" / "index.html",
+            includes_game=(
+                config.highlights.keep_game_audio and config.audio.game_track is not None
+            ),
             includes_discord=(
                 config.highlights.keep_discord_audio and config.audio.discord_track is not None
+            ),
+            includes_microphone=(
+                config.highlights.keep_microphone_audio
+                and config.audio.microphone_track is not None
             ),
         )
     return candidates, paths

@@ -11,6 +11,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Private-repository publishing safeguards, pinned CI, and automated secret
   scanning.
 - Repository social preview and consolidated documentation index.
+- Explicit opt-in microphone retention for highlight review and portrait
+  exports, with cache invalidation when the selected audio mix changes.
 
 ## [0.1.0] - 2026-08-15
 

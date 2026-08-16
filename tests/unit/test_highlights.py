@@ -7,6 +7,7 @@ import pytest
 
 from raid_editor.config.models import HighlightConfig
 from raid_editor.highlights import detection as highlight_detection
+from raid_editor.highlights import review as highlight_review
 from raid_editor.highlights.detection import (
     HighlightAnalysisError,
     Signal,
@@ -145,6 +146,48 @@ def test_highlight_analysis_refuses_any_audio_role_that_is_the_microphone(
         )
 
 
+def test_review_media_cache_rebuilds_when_the_audio_mix_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recording = tmp_path / "raid.mp4"
+    recording.write_bytes(b"synthetic recording")
+    destination = tmp_path / "review"
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> None:
+        commands.append(command)
+        Path(command[-1]).write_bytes(str(len(commands)).encode())
+
+    monkeypatch.setattr(highlight_review, "_run", fake_run)
+
+    first = highlight_review.generate_highlight_review_media(
+        recording,
+        [_candidate(include=False)],
+        destination,
+        audio_stream_indexes=[2, 3],
+    )
+    highlight_review.generate_highlight_review_media(
+        recording,
+        [_candidate(include=False)],
+        destination,
+        audio_stream_indexes=[2, 3],
+    )
+    rebuilt = highlight_review.generate_highlight_review_media(
+        recording,
+        [_candidate(include=False)],
+        destination,
+        audio_stream_indexes=[2, 3, 4],
+    )
+
+    manifest = json.loads(destination.joinpath("render-manifest.json").read_text(encoding="utf-8"))
+    assert len(commands) == 2
+    assert first == rebuilt
+    assert rebuilt["highlight-001"].read_bytes() == b"2"
+    assert manifest["audio_stream_indexes"] == [2, 3, 4]
+    assert "[0:4]" in commands[-1][commands[-1].index("-filter_complex") + 1]
+
+
 def test_vertical_export_requires_approval_and_selected_candidates(tmp_path: Path) -> None:
     with pytest.raises(HighlightRenderError, match="explicit approval"):
         render_vertical_highlights(
@@ -194,3 +237,34 @@ def test_vertical_dry_run_keeps_game_and_discord_but_excludes_microphone(
     assert "[0:2]" in graph
     assert "[0:3]" in graph
     assert "[0:4]" not in graph
+
+
+def test_vertical_dry_run_can_include_microphone_when_explicitly_enabled(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "vertical"
+    render_vertical_highlights(
+        tmp_path / "raid.mp4",
+        [_candidate(include=True)],
+        destination,
+        audio_stream_indexes=[2, 3, 4],
+        microphone_stream_index=4,
+        settings=HighlightConfig(
+            keep_microphone_audio=True,
+            hardware_encoding=False,
+        ),
+        approved=True,
+        dry_run=True,
+    )
+
+    manifest = json.loads(destination.joinpath("manifest.json").read_text(encoding="utf-8"))
+    clip = manifest["clips"][0]
+    graph = clip["command"][clip["command"].index("-filter_complex") + 1]
+
+    assert clip["audio_stream_indexes"] == [2, 3, 4]
+    assert clip["microphone_stream_index"] == 4
+    assert clip["microphone_included"] is True
+    assert clip["excluded_microphone_stream_index"] is None
+    assert "[0:2]" in graph
+    assert "[0:3]" in graph
+    assert "[0:4]" in graph

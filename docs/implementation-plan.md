@@ -403,4 +403,4 @@ Everything in this section is **future work and not current behavior**.
 - Beat analysis and deliberate music placement.
 - Multi-recording sessions and proxy workflows.
 
-Any future AI/CV output must remain a proposal with model/version provenance and human acceptance. It must not bypass microphone exclusion, music permission checks, or final-render boundaries.
+Any future AI/CV output must remain a proposal with model/version provenance and human acceptance. It must not bypass the configured audio-retention policy, music permission checks, or final-render boundaries.
