@@ -117,7 +117,7 @@ uv run raid-editor validate samples\synthetic-project.yaml
 Generated fixture output is written beneath
 `output\synthetic-pizza-warriors-raid\`.
 
-## Start a real project
+## Friday workflow
 
 On Friday, run the read-only preflight after a fresh 10-second OBS recording:
 
@@ -130,7 +130,28 @@ The command checks the active profile and scene, 1440p60 geometry, disk space,
 safe container, track labels and routing, combat-log freshness, and the actual
 smoke file. It does not read OBS service credentials or stream keys.
 
-The guided path is:
+After the raid, the normal Pizza Warriors workflow is one command:
+
+```powershell
+uv run raid-editor friday
+```
+
+It selects the newest completed non-smoke file in `D:\RaidRecordings`, confirms
+that it is 2560x1440 at 60 fps, verifies the distinct labelled Full Mix, WoW
+Game, Discord, and Microphone stems, and creates a new dated local config by
+cloning the newest prior raid. It locks in winning-takes-only cuts, full boss
+review clips, the approved V2 Icecrown intro/boss/outro package, the current
+Lausudo camera cover, scoreline-aware YouTube defaults, and both review lanes.
+It then opens the boss and highlight reviews and stops. It cannot render a final
+or upload from this command.
+
+If the newest file is not the raid, name it explicitly:
+
+```powershell
+uv run raid-editor friday --recording 'D:\RaidRecordings\2026-08-21 22-05-30.mp4'
+```
+
+The generic guided path is still available:
 
 ```powershell
 uv run raid-editor wizard
@@ -152,7 +173,7 @@ uv run raid-editor analyse config\my-raid.local.yaml
 uv run raid-editor review config\my-raid.local.yaml
 ```
 
-After the recording exists, the weekly shortcut prepares both independent
+For an already-created config, the lower-level shortcut prepares both independent
 review gates without rendering or uploading anything:
 
 ```powershell
@@ -253,6 +274,7 @@ uv run raid-editor archive config\my-raid.local.yaml --approved
 | Command | What it does |
 | --- | --- |
 | `preflight CONFIG [--smoke-recording FILE]` | Read-only Friday check of OBS profile/scene, 1440p60, disk, tracks, combat log, and an optional real test file. |
+| `friday [--recording FILE]` | Finds or accepts the completed raid, creates a dated project with approved Pizza Warriors defaults, verifies 1440p60 and labelled stems, opens both review lanes, and stops before rendering or upload. |
 | `inspect TARGET` | Probes a YAML project or recording and optionally creates audio samples. |
 | `analyse CONFIG` | Detects pulls, classifies supported ICC difficulty evidence, and writes reports plus configurable sample or full-pull review clips. |
 | `review CONFIG` | Regenerates and opens the local pull review. |
@@ -431,6 +453,32 @@ For legacy 3.3.5 logs with no boundary events, it deterministically clusters
 damage activity as lower-confidence `unknown` pulls. An optional
 `skada_export` can add timestamped boss segments and outcomes without executing
 the Lua file. These fallbacks still require manual review.
+
+The approved Pizza Warriors presentation uses the static V2 Icecrown plate for a
+five-second intro and matching five-second outro. Boss titles use the compact cyan
+card, with Normal/Heroic labels derived from confirmed encounter evidence. Relative
+asset paths are resolved from the project YAML:
+
+```yaml
+preview:
+  presentation:
+    theme: "icecrown_v2"
+    background_image: "../assets/pizza-warriors-raid-presentation-v2-clean-1920x1080.png"
+    intro_seconds: 5
+    outro_seconds: 5
+    intro_kicker: "WEEKLY RAID COVERAGE"
+    intro_title: "ICECROWN CITADEL"
+    intro_subtitle: "AUGUST 21, 2026 / 25 PLAYER RAID"
+    outro_kicker: "FULL CLEAR"
+    outro_title: "RAID COMPLETE"
+    outro_subtitle: null
+    boss_kicker: "PIZZA WARRIORS / ICECROWN CITADEL"
+```
+
+When `outro_subtitle` is `null`, the renderer builds it from the reviewed boss
+count, confirmed Heroic count, raid size, and raid date. Unknown difficulty remains
+visible as unknown rather than being guessed. The background and camera-cover
+bytes are fingerprinted into preview and final cache signatures.
 
 The `final` section controls the explicitly approved local master. With hardware
 encoding enabled, H.264 NVENC uses constant-QP quality; the default QP 18 is a

@@ -50,7 +50,7 @@ Inspect every file in `output\<project>\youtube\`:
 - `metadata.json`: exact title, description, tags, hashtags, category, game,
   audience flags, and requested visibility;
 - `description.md`: copyable description with YouTube chapters;
-- `chapters.txt`: chapter offsets including presentation intro/outro time;
+- `chapters.txt`: chapter offsets including presentation intro and outro time;
 - `thumbnail-01.jpg` through `thumbnail-03.jpg`: scoreline, first-Heroic, and
   final-boss 1280x720 candidates constrained to YouTube's 2 MB limit;
 - `thumbnail-source.jpg`: the configured candidate selected for upload;

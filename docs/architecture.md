@@ -83,6 +83,7 @@ The implemented commands are:
 | `analyse-highlights CONFIG` | Fuse motion, game/Discord energy, combat pressure, and boss climaxes into unapproved review candidates. |
 | `render-highlights CONFIG --approved` | Render only explicitly selected portrait clips with the configured game, Discord, and optional microphone mix. |
 | `prepare-weekly CONFIG` | Prepare both review gates without rendering a final or transmitting anything. |
+| `friday [--recording FILE]` | Find and verify the completed 1440p60 raid, safely create or reuse its dated config, prepare both reviews, and stop at the gates. |
 | `build-timeline CONFIG` | Build timeline artifacts, microphone-free sidecar, FCPXML, and Resolve payload. |
 | `create-resolve-project CONFIG` | Invoke the isolated Python 3.13 Resolve helper; supports `--dry-run`. |
 | `render-preview CONFIG` | Build dependencies and render the configured review MP4; supports `--dry-run`. |
@@ -114,7 +115,7 @@ The durable configuration sections are:
 - `detection`: minimum duration, merge gap, handles, confidence threshold, one combat-log offset, and optional recording start.
 - `editing`: inclusion policies and transition duration.
 - `music`: registry path and explicitly approved IDs.
-- `preview`: resolution, frame rate, bitrate, hardware choice, watermark, and presentation cards.
+- `preview`: resolution, frame rate, bitrate, hardware choice, watermark, static presentation plate, and boss-card theme.
 - `final`: source/explicit geometry and frame rate, codec, quality, preset, hardware choice, and audio bitrate.
 - `difficulty`: supported raid sizes, expected bosses, and title blocking rules.
 - `highlights`: signal thresholds, review context, game/Discord/microphone retention, and portrait output.
@@ -333,7 +334,11 @@ The preview is identified by:
 - Reports and CLI wording.
 
 Optional presentation cards, boss titles, and an image watermark are burned into
-the preview and final when configured.
+the preview and final when configured. The Pizza Warriors `icecrown_v2` theme
+loops one static 16:9 presentation plate only for the intro and outro, adds the
+compact cyan difficulty-aware card over the first four seconds of each retained
+boss, and leaves the gameplay watermark independent. Presentation and watermark
+content hashes participate in render caching.
 
 `render-final` reuses the deterministic accepted timeline, audio mapping, titles,
 watermark, and presentation cards at the configured final geometry/quality. It

@@ -58,14 +58,20 @@ def load_project_config(path: Path) -> ProjectConfig:
         }
     )
     normalized_preview = config.preview
+    preview_updates: dict[str, object] = {}
     if config.preview.watermark is not None:
-        normalized_preview = config.preview.model_copy(
+        preview_updates["watermark"] = config.preview.watermark.model_copy(
+            update={"image": _absolute(base, config.preview.watermark.image)}
+        )
+    presentation = config.preview.presentation
+    if presentation is not None and presentation.background_image is not None:
+        preview_updates["presentation"] = presentation.model_copy(
             update={
-                "watermark": config.preview.watermark.model_copy(
-                    update={"image": _absolute(base, config.preview.watermark.image)}
-                )
+                "background_image": _absolute(base, presentation.background_image),
             }
         )
+    if preview_updates:
+        normalized_preview = config.preview.model_copy(update=preview_updates)
     normalized_youtube = config.youtube
     if any(
         path is not None

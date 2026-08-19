@@ -24,6 +24,11 @@ from raid_editor.preflight import run_preflight
 from raid_editor.resolve.bridge import run_resolve_bridge
 from raid_editor.util.logging import configure_logging
 from raid_editor.util.paths import atomic_write_text, ensure_directory, slugify
+from raid_editor.weekly import (
+    create_weekly_project_config,
+    find_latest_recording,
+    verify_completed_recording,
+)
 from raid_editor.workflow import (
     ProjectPaths,
     analyse_highlights_project,
@@ -212,6 +217,88 @@ def prepare_weekly_command(
         typer.echo(f"Highlight candidates: {len(highlights)}")
         typer.echo(f"Pull review: {pull_page}")
         typer.echo(f"Highlight review: {highlight_page}")
+        if open_browser:
+            _open(pull_page)
+            _open(highlight_page)
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("friday")
+def friday_command(
+    recording: Path | None = typer.Option(
+        None,
+        "--recording",
+        help="Completed OBS recording. Defaults to the newest stable raid recording.",
+    ),
+    recording_directory: Path = typer.Option(
+        Path(r"D:\RaidRecordings"),
+        "--recording-directory",
+        help="Folder searched when --recording is omitted.",
+    ),
+    template: Path | None = typer.Option(
+        None,
+        "--template",
+        help="Earlier approved local config to clone. Defaults to the newest dated config.",
+    ),
+    minimum_age_minutes: float = typer.Option(
+        2.0,
+        "--minimum-age-minutes",
+        min=0,
+        help="Ignore a newest file that may still be recording.",
+    ),
+    stability_seconds: float = typer.Option(
+        2.0,
+        "--stability-seconds",
+        min=0,
+        help="Seconds used to confirm the selected recording stopped changing.",
+    ),
+    prepare_reviews: bool = typer.Option(
+        True,
+        "--prepare/--config-only",
+        help="Prepare both review lanes, or stop after safely creating the dated config.",
+    ),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Start the post-raid workflow from the newest verified Friday recording."""
+
+    try:
+        selected = (
+            verify_completed_recording(
+                recording,
+                minimum_age_minutes=minimum_age_minutes,
+                stability_seconds=stability_seconds,
+            )
+            if recording is not None
+            else find_latest_recording(
+                recording_directory,
+                minimum_age_minutes=minimum_age_minutes,
+                stability_seconds=stability_seconds,
+            )
+        )
+        setup = create_weekly_project_config(selected, template_path=template)
+        typer.echo(f"Recording: {setup.recording}")
+        typer.echo(f"Project config: {setup.config_path}")
+        typer.echo(f"Config: {'created' if setup.created else 'reused without overwrite'}")
+        typer.echo(
+            "Verified tracks: "
+            f"Full Mix={setup.audio_roles['mixed']}, WoW Game={setup.audio_roles['game']}, "
+            f"Discord={setup.audio_roles['discord']}, "
+            f"Microphone={setup.audio_roles['microphone']}"
+        )
+        if not prepare_reviews:
+            typer.echo("Stopped after config creation; no review, render, or upload was performed.")
+            return
+        config = load_project_config(setup.config_path)
+        _, pulls, paths = analyse_project(config, create_review_media=True)
+        highlights, _ = analyse_highlights_project(config, create_review_media=True)
+        pull_page = paths.review / "pull-review.html"
+        highlight_page = paths.highlights / "review" / "index.html"
+        typer.echo(f"Winning-pull candidates: {len(pulls)}")
+        typer.echo(f"Highlight candidates: {len(highlights)}")
+        typer.echo(f"Pull review: {pull_page}")
+        typer.echo(f"Highlight review: {highlight_page}")
+        typer.echo("Stopped at the review gates; no final render or upload was performed.")
         if open_browser:
             _open(pull_page)
             _open(highlight_page)

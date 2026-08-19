@@ -231,12 +231,16 @@ class WatermarkConfig(StrictModel):
 
 
 class PresentationConfig(StrictModel):
+    theme: Literal["classic", "icecrown_v2"] = "classic"
+    background_image: Path | None = None
     intro_seconds: float = Field(default=5.0, ge=0, le=15)
     outro_seconds: float = Field(default=5.0, ge=0, le=15)
+    intro_kicker: str = "WEEKLY RAID COVERAGE"
     intro_title: str = "PIZZA WARRIORS"
     intro_subtitle: str = "ICECROWN CITADEL"
+    outro_kicker: str = "FULL CLEAR"
     outro_title: str = "RAID COMPLETE"
-    outro_subtitle: str = "PIZZA WARRIORS"
+    outro_subtitle: str | None = "PIZZA WARRIORS"
     boss_kicker: str = "PIZZA WARRIORS"
 
 

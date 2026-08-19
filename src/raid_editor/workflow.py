@@ -23,11 +23,12 @@ from raid_editor.audio.tracks import (
 from raid_editor.classification.difficulty import (
     DETECTOR_VERSION,
     classify_pull_difficulties,
+    scoreline_title_prefix,
     summarize_raid_progress,
     write_difficulty_report,
 )
 from raid_editor.config.loader import project_output_dir
-from raid_editor.config.models import ProjectConfig
+from raid_editor.config.models import PresentationConfig, ProjectConfig
 from raid_editor.detection.pipeline import analyse_pulls
 from raid_editor.highlights.detection import (
     analyse_highlights,
@@ -462,6 +463,28 @@ def selected_music(config: ProjectConfig) -> list[MusicTrack]:
     return approved_tracks(library, config.music.approved_track_ids)
 
 
+def _resolved_presentation(
+    config: ProjectConfig,
+    pulls: list[PullCandidate],
+) -> PresentationConfig | None:
+    presentation = config.preview.presentation
+    if presentation is None or presentation.outro_subtitle is not None:
+        return presentation
+    progress = summarize_raid_progress(
+        pulls,
+        raid_name=config.project.raid,
+        settings=config.difficulty,
+    )
+    scoreline = scoreline_title_prefix(
+        progress,
+        raid_name=config.project.raid,
+        settings=config.difficulty,
+    ).removesuffix(" Full Clear")
+    raid_date = config.project.raid_date or date.today()
+    date_label = f"{raid_date.strftime('%B')} {raid_date.day}, {raid_date.year}".upper()
+    return presentation.model_copy(update={"outro_subtitle": f"{scoreline} / {date_label}"})
+
+
 def render_preview_project(
     config: ProjectConfig,
     *,
@@ -469,6 +492,7 @@ def render_preview_project(
 ) -> tuple[Path, ProjectPaths]:
     probe, pulls, timeline, _, paths = build_timeline_project(config)
     music = selected_music(config)
+    presentation = _resolved_presentation(config, pulls)
     pull_csv = paths.analysis / "pull-candidates.csv"
     if pull_csv.is_file():
         atomic_write_text(
@@ -492,7 +516,7 @@ def render_preview_project(
         music=music[0] if music else None,
         hardware_encoding=config.preview.hardware_encoding,
         watermark=config.preview.watermark,
-        presentation=config.preview.presentation,
+        presentation=presentation,
         dry_run=dry_run,
     )
     retained_names = [
@@ -579,6 +603,7 @@ def render_final_project(
     probe, pulls, timeline, _, paths = build_timeline_project(config)
     resolution, fps, width, height, destination = _final_output_settings(config, probe, paths)
     music = selected_music(config)
+    presentation = _resolved_presentation(config, pulls)
     render_final(
         timeline,
         destination,
@@ -592,7 +617,7 @@ def render_final_project(
         music=music[0] if music else None,
         hardware_encoding=config.final.hardware_encoding,
         watermark=config.preview.watermark,
-        presentation=config.preview.presentation,
+        presentation=presentation,
         approved=approved,
         dry_run=dry_run,
     )
@@ -601,9 +626,8 @@ def render_final_project(
 
     final_probe = probe_media(destination)
     expected_duration = timeline.duration_seconds
-    if config.preview.presentation is not None:
-        expected_duration += config.preview.presentation.intro_seconds
-        expected_duration += config.preview.presentation.outro_seconds
+    if presentation is not None:
+        expected_duration += presentation.intro_seconds + presentation.outro_seconds
     source_path = Path(str(probe.source["path"]))
     source_stat = source_path.stat()
     checks = [
