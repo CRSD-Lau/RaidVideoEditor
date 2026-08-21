@@ -148,7 +148,11 @@ def test_load_project_config_resolves_preview_watermark_path(tmp_path: Path) -> 
             "y_fraction": 0.74,
             "width_fraction": 0.26,
             "height_fraction": 0.26,
-        }
+        },
+        "presentation": {
+            "theme": "icecrown_v2",
+            "background_image": "assets/presentation.png",
+        },
     }
     config_path = tmp_path / "project.yaml"
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -157,6 +161,12 @@ def test_load_project_config_resolves_preview_watermark_path(tmp_path: Path) -> 
 
     assert config.preview.watermark is not None
     assert config.preview.watermark.image == (tmp_path / "assets/camera-cover.png").resolve()
+    assert config.preview.presentation is not None
+    assert config.preview.presentation.theme == "icecrown_v2"
+    assert (
+        config.preview.presentation.background_image
+        == (tmp_path / "assets/presentation.png").resolve()
+    )
 
 
 def test_load_project_config_resolves_youtube_credential_paths(tmp_path: Path) -> None:

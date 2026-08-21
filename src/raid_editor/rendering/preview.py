@@ -25,7 +25,7 @@ class FinalRenderError(RuntimeError):
 
 
 def _escape_drawtext(value: str) -> str:
-    safe = re.sub(r"[^\w .()\-–—]", " ", value, flags=re.UNICODE)
+    safe = re.sub(r"[^\w .(),/'\-–—:]", " ", value, flags=re.UNICODE)
     return safe.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
 
@@ -52,7 +52,8 @@ def build_filter_graph(
 
     intro_seconds = presentation.intro_seconds if presentation is not None else 0.0
     outro_seconds = presentation.outro_seconds if presentation is not None else 0.0
-    has_cards = intro_seconds > 0 or outro_seconds > 0
+    has_presentation = intro_seconds > 0 or outro_seconds > 0
+    presentation_theme = presentation.theme if presentation is not None else "classic"
     boss_kicker = presentation.boss_kicker if presentation is not None else "PIZZA WARRIORS"
     for clip_index, clip in enumerate(timeline.clips):
         duration = clip.source_out - clip.source_in
@@ -69,44 +70,79 @@ def build_filter_graph(
             difficulty_badge = "UNCONFIRMED"
             difficulty_color = "0x596579"
         raid_size = clip.difficulty[:2] if clip.difficulty != "UNKNOWN" else None
+        separator = " / " if presentation_theme == "icecrown_v2" else " - "
         clip_kicker = (
-            f"{boss_kicker} - {raid_size} PLAYER" if raid_size is not None else boss_kicker
+            f"{boss_kicker}{separator}{raid_size} PLAYER" if raid_size is not None else boss_kicker
         )
-        difficulty_overlay = (
-            f",drawbox=x={ui(592)}:y={ui(34)}:w={ui(116)}:h={ui(30)}:"
-            f"color={difficulty_color}@0.94:t=fill:enable='lt(t,4)',"
-            "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
-            f"text='{difficulty_badge}':fontcolor=white:fontsize={ui(12)}:"
-            f"x={ui(592)}+({ui(116)}-text_w)/2:y={ui(41)}:"
-            "enable='lt(t,4)'"
-            if show_difficulty
-            else ""
-        )
-        video_filter = (
+        source_filter = (
             f"[0:v:0]trim=start={clip.source_in:.6f}:end={clip.source_out:.6f},"
             "setpts=PTS-STARTPTS,"
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            f"fps={fps},"
-            f"drawbox=x={ui(24)}:y={ui(18)}:w={ui(704)}:h={ui(94)}:"
-            "color=0x05070D@0.82:t=fill:"
-            "enable='lt(t,4)',"
-            f"drawbox=x={ui(24)}:y={ui(18)}:w={ui(5)}:h={ui(94)}:"
-            "color=0xD79A2B@0.96:t=fill:"
-            "enable='lt(t,4)',"
-            f"drawbox=x={ui(29)}:y={ui(108)}:w={ui(699)}:h={ui(2)}:"
-            "color=0xD79A2B@0.82:t=fill:"
-            "enable='lt(t,4)',"
-            "drawtext=fontfile='C\\:/Windows/Fonts/georgiab.ttf':"
-            f"text='{_escape_drawtext(clip.label)}':"
-            f"fontcolor=0xF2D28B:fontsize={ui(32)}:x={ui(48)}:y={ui(28)}:"
-            "enable='lt(t,4)',"
-            "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
-            f"text='{_escape_drawtext(clip_kicker)}':"
-            f"fontcolor=0x8ECDF2:fontsize={ui(14)}:x={ui(49)}:y={ui(72)}:"
-            "enable='lt(t,4)'"
-            f"{difficulty_overlay}"
+            f"fps={fps}"
         )
+        if presentation_theme == "icecrown_v2":
+            badge_font_size = ui(9 if difficulty_badge == "UNCONFIRMED" else 12)
+            boss_title = (clip.encounter or clip.label).upper()
+            difficulty_overlay = (
+                f",drawbox=x={ui(550)}:y={ui(43)}:w={ui(108)}:h={ui(33)}:"
+                "color=0x61E4FF@0.96:t=fill:enable='lt(t,4)',"
+                f"drawbox=x={ui(551)}:y={ui(44)}:w={ui(106)}:h={ui(31)}:"
+                "color=0x020913@0.96:t=fill:enable='lt(t,4)',"
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{difficulty_badge}':fontcolor=0xEAF8FF:fontsize={badge_font_size}:"
+                f"x={ui(550)}+({ui(108)}-text_w)/2:"
+                f"y={ui(43)}+({ui(33)}-text_h)/2:enable='lt(t,4)'"
+                if show_difficulty
+                else ""
+            )
+            video_filter = (
+                f"{source_filter},"
+                f"drawbox=x={ui(24)}:y={ui(18)}:w={ui(658)}:h={ui(87)}:"
+                "color=0x61E4FF@0.96:t=fill:enable='lt(t,4)',"
+                f"drawbox=x={ui(25)}:y={ui(19)}:w={ui(656)}:h={ui(85)}:"
+                "color=0x020913@0.94:t=fill:enable='lt(t,4)',"
+                f"drawbox=x={ui(48)}:y={ui(31)}:w={ui(64)}:h={ui(4)}:"
+                "color=0x61E4FF@0.98:t=fill:enable='lt(t,4)',"
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(clip_kicker.upper())}':"
+                f"fontcolor=0x61E4FF:fontsize={ui(14)}:x={ui(48)}:y={ui(45)}:"
+                "enable='lt(t,4)',"
+                "drawtext=fontfile='C\\:/Windows/Fonts/segoeuil.ttf':"
+                f"text='{_escape_drawtext(boss_title)}':"
+                f"fontcolor=0xEAF8FF:fontsize={ui(30)}:x={ui(48)}:y={ui(59)}:"
+                "shadowcolor=black@0.72:shadowx=2:shadowy=2:enable='lt(t,4)'"
+                f"{difficulty_overlay}"
+            )
+        else:
+            difficulty_overlay = (
+                f",drawbox=x={ui(592)}:y={ui(34)}:w={ui(116)}:h={ui(30)}:"
+                f"color={difficulty_color}@0.94:t=fill:enable='lt(t,4)',"
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{difficulty_badge}':fontcolor=white:fontsize={ui(12)}:"
+                f"x={ui(592)}+({ui(116)}-text_w)/2:y={ui(41)}:"
+                "enable='lt(t,4)'"
+                if show_difficulty
+                else ""
+            )
+            video_filter = (
+                f"{source_filter},"
+                f"drawbox=x={ui(24)}:y={ui(18)}:w={ui(704)}:h={ui(94)}:"
+                "color=0x05070D@0.82:t=fill:enable='lt(t,4)',"
+                f"drawbox=x={ui(24)}:y={ui(18)}:w={ui(5)}:h={ui(94)}:"
+                "color=0xD79A2B@0.96:t=fill:enable='lt(t,4)',"
+                f"drawbox=x={ui(29)}:y={ui(108)}:w={ui(699)}:h={ui(2)}:"
+                "color=0xD79A2B@0.82:t=fill:enable='lt(t,4)',"
+                "drawtext=fontfile='C\\:/Windows/Fonts/georgiab.ttf':"
+                f"text='{_escape_drawtext(clip.label)}':"
+                f"fontcolor=0xF2D28B:fontsize={ui(32)}:x={ui(48)}:y={ui(28)}:"
+                "enable='lt(t,4)',"
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(clip_kicker)}':"
+                f"fontcolor=0x8ECDF2:fontsize={ui(14)}:x={ui(49)}:y={ui(72)}:"
+                "enable='lt(t,4)'"
+                f"{difficulty_overlay}"
+            )
         if fade > 0:
             video_filter += (
                 f",fade=t=in:st=0:d={fade:.3f},"
@@ -122,9 +158,9 @@ def build_filter_graph(
     if watermark is not None:
         watermark_input = 1 + int(music is not None)
         logo_branches = ["watermark_raw"]
-        if intro_seconds > 0:
+        if presentation_theme == "classic" and intro_seconds > 0:
             logo_branches.append("intro_logo_raw")
-        if outro_seconds > 0:
+        if presentation_theme == "classic" and outro_seconds > 0:
             logo_branches.append("outro_logo_raw")
         if len(logo_branches) > 1:
             outputs = "".join(f"[{label}]" for label in logo_branches)
@@ -132,9 +168,9 @@ def build_filter_graph(
             watermark_source = "[watermark_raw]"
         else:
             watermark_source = f"[{watermark_input}:v:0]"
-        if intro_seconds > 0:
+        if presentation_theme == "classic" and intro_seconds > 0:
             logo_labels["intro"] = "intro_logo_raw"
-        if outro_seconds > 0:
+        if presentation_theme == "classic" and outro_seconds > 0:
             logo_labels["outro"] = "outro_logo_raw"
         watermark_width = max(1, round(width * watermark.width_fraction))
         watermark_height = max(1, round(height * watermark.height_fraction))
@@ -154,19 +190,69 @@ def build_filter_graph(
     else:
         program_video = "vbase"
 
+    background_labels: dict[str, str] = {}
+    if presentation is not None and presentation.background_image is not None:
+        background_input = 1 + int(music is not None) + int(watermark is not None)
+        background_branches: list[str] = []
+        if intro_seconds > 0:
+            background_branches.append("intro_background_raw")
+        if outro_seconds > 0:
+            background_branches.append("outro_background_raw")
+        if len(background_branches) > 1:
+            outputs = "".join(f"[{label}]" for label in background_branches)
+            filters.append(f"[{background_input}:v:0]split={len(background_branches)}{outputs}")
+        elif background_branches:
+            filters.append(f"[{background_input}:v:0]null[{background_branches[0]}]")
+        if intro_seconds > 0:
+            background_labels["intro"] = "intro_background_raw"
+        if outro_seconds > 0:
+            background_labels["outro"] = "outro_background_raw"
+
     def add_card(
         card_name: str,
         duration: float,
+        kicker: str,
         title: str,
         subtitle: str,
     ) -> str:
         background = f"{card_name}_background"
         canvas = f"{card_name}_canvas"
         output = f"v{card_name}"
-        filters.append(
-            f"color=c=0x04070D:s={width}x{height}:r={fps}:d={duration:.6f},"
-            f"format=yuv420p[{background}]"
-        )
+        background_source = background_labels.get(card_name)
+        if background_source is not None:
+            filters.append(
+                f"[{background_source}]fps={fps},trim=duration={duration:.6f},"
+                "setpts=PTS-STARTPTS,"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},setsar=1,format=yuv420p[{background}]"
+            )
+        else:
+            filters.append(
+                f"color=c=0x04070D:s={width}x{height}:r={fps}:d={duration:.6f},"
+                f"format=yuv420p[{background}]"
+            )
+        if presentation_theme == "icecrown_v2":
+            filters.append(f"[{background}]null[{canvas}]")
+            fade = min(0.5, duration / 4)
+            filters.append(
+                f"[{canvas}]"
+                f"drawbox=x={ui(48)}:y={ui(486)}:w={ui(64)}:h={ui(4)}:"
+                "color=0x61E4FF@0.98:t=fill,"
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(kicker.upper())}':"
+                f"fontcolor=0x61E4FF:fontsize={ui(14)}:x={ui(48)}:y={ui(504)},"
+                "drawtext=fontfile='C\\:/Windows/Fonts/segoeuil.ttf':"
+                f"text='{_escape_drawtext(title.upper())}':"
+                f"fontcolor=0xEAF8FF:fontsize={ui(64)}:x={ui(48)}:y={ui(520)}:"
+                "shadowcolor=black@0.72:shadowx=2:shadowy=2,"
+                "drawtext=fontfile='C\\:/Windows/Fonts/segoeui.ttf':"
+                f"text='{_escape_drawtext(subtitle.upper())}':"
+                f"fontcolor=0xBBD5E4:fontsize={ui(16)}:x={ui(48)}:y={ui(620)},"
+                f"fade=t=in:st=0:d={fade:.3f},"
+                f"fade=t=out:st={max(0.0, duration - fade):.6f}:d={fade:.3f},"
+                f"format=yuv420p[{output}]"
+            )
+            return output
         logo_source = logo_labels.get(card_name)
         if logo_source is not None:
             logo_size = max(1, round(height * 0.42))
@@ -209,6 +295,7 @@ def build_filter_graph(
             add_card(
                 "intro",
                 intro_seconds,
+                presentation.intro_kicker,
                 presentation.intro_title,
                 presentation.intro_subtitle,
             )
@@ -219,11 +306,12 @@ def build_filter_graph(
             add_card(
                 "outro",
                 outro_seconds,
+                presentation.outro_kicker,
                 presentation.outro_title,
-                presentation.outro_subtitle,
+                presentation.outro_subtitle or "",
             )
         )
-    if has_cards:
+    if has_presentation:
         filters.append(
             "".join(f"[{label}]" for label in video_sequence)
             + f"concat=n={len(video_sequence)}:v=1:a=0,format=yuv420p[vout]"
@@ -267,7 +355,7 @@ def build_filter_graph(
         mix_inputs.append("[music]")
     if not mix_inputs:
         raise PreviewRenderError("Preview has no retained audio; configure audio roles first")
-    audio_output = "aprogram" if has_cards else "aout"
+    audio_output = "aprogram" if has_presentation else "aout"
     if len(mix_inputs) == 1:
         filters.append(
             f"{mix_inputs[0]}alimiter=limit=0.95,"
@@ -282,7 +370,7 @@ def build_filter_graph(
             "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
             f"[{audio_output}]"
         )
-    if has_cards:
+    if has_presentation:
         audio_sequence: list[str] = []
         if intro_seconds > 0:
             filters.append(
@@ -317,6 +405,7 @@ def build_preview_command(
     music: MusicTrack | None,
     hardware_encoding: bool = False,
     watermark: Path | None = None,
+    presentation_background: Path | None = None,
 ) -> list[str]:
     command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-i", str(timeline.source)]
     if music is not None:
@@ -326,6 +415,8 @@ def build_preview_command(
             command.extend(["-stream_loop", "-1", "-ignore_loop", "1", "-i", str(watermark)])
         else:
             command.extend(["-loop", "1", "-i", str(watermark)])
+    if presentation_background is not None:
+        command.extend(["-loop", "1", "-i", str(presentation_background)])
     command.extend(
         [
             "-/filter_complex",
@@ -388,6 +479,7 @@ def build_final_command(
     music: MusicTrack | None,
     hardware_encoding: bool,
     watermark: Path | None = None,
+    presentation_background: Path | None = None,
 ) -> list[str]:
     if codec.casefold() != "h264":
         raise FinalRenderError("The approved-master renderer currently supports only H.264")
@@ -399,6 +491,8 @@ def build_final_command(
             command.extend(["-stream_loop", "-1", "-ignore_loop", "1", "-i", str(watermark)])
         else:
             command.extend(["-loop", "1", "-i", str(watermark)])
+    if presentation_background is not None:
+        command.extend(["-loop", "1", "-i", str(presentation_background)])
     command.extend(
         [
             "-/filter_complex",
@@ -476,6 +570,15 @@ def _bitrate_bits_per_second(value: str) -> int:
     return round(amount * multiplier)
 
 
+def _presentation_background(presentation: PresentationConfig | None) -> Path | None:
+    if presentation is None or presentation.background_image is None:
+        return None
+    background = presentation.background_image.expanduser().resolve()
+    if not background.is_file():
+        raise PreviewRenderError(f"Presentation background does not exist: {background}")
+    return background
+
+
 def render_preview(
     timeline: TimelineDocument,
     destination: Path,
@@ -492,6 +595,7 @@ def render_preview(
 ) -> list[str]:
     width_text, height_text = resolution.split("x", maxsplit=1)
     width, height = int(width_text), int(height_text)
+    presentation_background = _presentation_background(presentation)
     ensure_directory(destination.parent)
     filter_script = destination.with_suffix(".filters.txt")
     graph = build_filter_graph(
@@ -513,6 +617,7 @@ def render_preview(
         music=music,
         hardware_encoding=hardware_encoding,
         watermark=watermark.image if watermark is not None else None,
+        presentation_background=presentation_background,
     )
     signature = hashlib.sha256(
         (
@@ -525,6 +630,11 @@ def render_preview(
                 if watermark is not None
                 else ""
             )
+            + (
+                hashlib.sha256(presentation_background.read_bytes()).hexdigest()
+                if presentation_background is not None
+                else ""
+            )
         ).encode()
     ).hexdigest()
     manifest = destination.with_suffix(".manifest.json")
@@ -534,9 +644,9 @@ def render_preview(
                 return command
         except (OSError, json.JSONDecodeError):
             pass
-    intro_seconds = presentation.intro_seconds if presentation is not None else 0.0
+    lead_in_seconds = presentation.intro_seconds if presentation is not None else 0.0
     outro_seconds = presentation.outro_seconds if presentation is not None else 0.0
-    output_duration = timeline.duration_seconds + intro_seconds + outro_seconds
+    output_duration = timeline.duration_seconds + lead_in_seconds + outro_seconds
     estimated_bytes = (_bitrate_bits_per_second(bitrate) + 192_000) * output_duration / 8
     free_bytes = shutil.disk_usage(destination.parent).free
     if free_bytes < estimated_bytes * 1.5:
@@ -559,6 +669,11 @@ def render_preview(
             "timeline_duration_seconds": timeline.duration_seconds,
             "output_duration_seconds": output_duration,
             "presentation": presentation.model_dump(mode="json") if presentation else None,
+            "presentation_background_sha256": (
+                hashlib.sha256(presentation_background.read_bytes()).hexdigest()
+                if presentation_background is not None
+                else None
+            ),
             "music_track_id": music.id if music else None,
         },
     )
@@ -590,6 +705,10 @@ def render_final(
         )
     width_text, height_text = resolution.split("x", maxsplit=1)
     width, height = int(width_text), int(height_text)
+    try:
+        presentation_background = _presentation_background(presentation)
+    except PreviewRenderError as exc:
+        raise FinalRenderError(str(exc)) from exc
     ensure_directory(destination.parent)
     filter_script = destination.with_suffix(".filters.txt")
     graph = build_filter_graph(
@@ -615,6 +734,7 @@ def render_final(
         music=music,
         hardware_encoding=hardware_encoding,
         watermark=watermark.image if watermark is not None else None,
+        presentation_background=presentation_background,
     )
     signature = hashlib.sha256(
         (
@@ -625,6 +745,11 @@ def render_final(
             + (
                 hashlib.sha256(watermark.image.read_bytes()).hexdigest()
                 if watermark is not None
+                else ""
+            )
+            + (
+                hashlib.sha256(presentation_background.read_bytes()).hexdigest()
+                if presentation_background is not None
                 else ""
             )
         ).encode()
@@ -639,9 +764,9 @@ def render_final(
         raise FinalRenderError(
             f"A different final master already exists at {destination}; move it before rerendering"
         )
-    intro_seconds = presentation.intro_seconds if presentation is not None else 0.0
+    lead_in_seconds = presentation.intro_seconds if presentation is not None else 0.0
     outro_seconds = presentation.outro_seconds if presentation is not None else 0.0
-    output_duration = timeline.duration_seconds + intro_seconds + outro_seconds
+    output_duration = timeline.duration_seconds + lead_in_seconds + outro_seconds
     estimated_bytes = (60_000_000 + _bitrate_bits_per_second(audio_bitrate)) * output_duration / 8
     free_bytes = shutil.disk_usage(destination.parent).free
     if free_bytes < estimated_bytes * 1.5:
@@ -670,6 +795,11 @@ def render_final(
             "timeline_duration_seconds": timeline.duration_seconds,
             "output_duration_seconds": output_duration,
             "presentation": presentation.model_dump(mode="json") if presentation else None,
+            "presentation_background_sha256": (
+                hashlib.sha256(presentation_background.read_bytes()).hexdigest()
+                if presentation_background is not None
+                else None
+            ),
             "music_track_id": music.id if music else None,
         },
     )

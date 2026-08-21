@@ -99,9 +99,26 @@ preview:
   resolution: "1280x720"
   fps: 30
   bitrate: "4M"
-  hardware_encoding: false
-  watermark: null
-  presentation: null
+  hardware_encoding: true
+  review_clip_mode: "full"
+  watermark:
+    image: "../assets/pizza-warriors-lausudo-camera-cover-v1.png"
+    x_fraction: 0.0
+    y_fraction: 0.742
+    width_fraction: 0.258
+    height_fraction: 0.258
+  presentation:
+    theme: "icecrown_v2"
+    background_image: "../assets/pizza-warriors-raid-presentation-v2-clean-1920x1080.png"
+    intro_seconds: 5
+    outro_seconds: 5
+    intro_kicker: "WEEKLY RAID COVERAGE"
+    intro_title: "ICECROWN CITADEL"
+    intro_subtitle: "RAID DATE / 25 PLAYER RAID"
+    outro_kicker: "FULL CLEAR"
+    outro_title: "RAID COMPLETE"
+    outro_subtitle: null
+    boss_kicker: "PIZZA WARRIORS / ICECROWN CITADEL"
 
 final:
   resolution: "source"

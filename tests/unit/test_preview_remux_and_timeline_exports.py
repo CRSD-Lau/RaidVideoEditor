@@ -194,6 +194,65 @@ def test_preview_command_loops_an_animated_gif_watermark(tmp_path: Path) -> None
     assert str(logo) in command
 
 
+def test_static_presentation_background_is_separate_from_the_watermarked_raid(
+    tmp_path: Path,
+) -> None:
+    background = tmp_path / "presentation.png"
+    cover = tmp_path / "camera-cover.png"
+    presentation = PresentationConfig(
+        theme="icecrown_v2",
+        background_image=background,
+        intro_seconds=5,
+        outro_seconds=5,
+        intro_kicker="Weekly Raid Coverage",
+        intro_title="Icecrown Citadel",
+        intro_subtitle="August 14, 2026 / 25 Player Raid",
+        outro_kicker="Full Clear",
+        outro_title="Raid Complete",
+        outro_subtitle="ICC 25M 12/12 7HC / August 14, 2026",
+    )
+    watermark = WatermarkConfig(
+        image=cover,
+        x_fraction=0,
+        y_fraction=0.75,
+        width_fraction=0.25,
+        height_fraction=0.25,
+    )
+    graph = build_filter_graph(
+        _timeline(tmp_path / "source.mkv"),
+        width=1280,
+        height=720,
+        fps=30,
+        transition_seconds=0.2,
+        music=None,
+        watermark=watermark,
+        presentation=presentation,
+    )
+    command = build_preview_command(
+        _timeline(tmp_path / "source.mkv"),
+        tmp_path / "review.filters.txt",
+        tmp_path / "review.mp4",
+        bitrate="4M",
+        music=None,
+        watermark=cover,
+        presentation_background=background,
+    )
+
+    assert "[2:v:0]split=2[intro_background_raw][outro_background_raw]" in graph
+    assert "text='ICECROWN CITADEL'" in graph
+    assert "text='RAID COMPLETE'" in graph
+    assert "text='ICC 25M 12/12 7HC / AUGUST 14, 2026'" in graph
+    assert "[vbase][watermark]overlay=" in graph
+    assert "[vintro][vprogram][voutro]concat=n=3:v=1:a=0" in graph
+    assert "[aintro][aprogram][aoutro]concat=n=3:v=0:a=1[aout]" in graph
+    assert command.count("-i") == 3
+    assert command[command.index(str(background)) - 1] == "-i"
+    assert command[command.index(str(background)) - 2 : command.index(str(background))] == [
+        "1",
+        "-i",
+    ]
+
+
 def test_preview_graph_adds_branded_intro_outro_and_boss_titles(tmp_path: Path) -> None:
     logo = tmp_path / "pizza-warriors.gif"
     logo.write_bytes(b"animated image placeholder")
@@ -261,6 +320,33 @@ def test_branded_graph_scales_title_geometry_for_1440p(tmp_path: Path) -> None:
     assert "fontcolor=0xF2D28B:fontsize=64:x=96:y=56" in graph
     assert "drawbox=x=(iw-1240)/2:y=800:w=1240:h=4" in graph
     assert "fontcolor=0xF2D28B:fontsize=88" in graph
+
+
+def test_icecrown_v2_boss_card_is_compact_and_centers_the_difficulty_badge(
+    tmp_path: Path,
+) -> None:
+    graph = build_filter_graph(
+        _timeline(tmp_path / "source.mkv"),
+        width=2560,
+        height=1440,
+        fps=60,
+        transition_seconds=0.2,
+        music=None,
+        presentation=PresentationConfig(
+            theme="icecrown_v2",
+            intro_seconds=0,
+            outro_seconds=0,
+            boss_kicker="Pizza Warriors / Icecrown Citadel",
+        ),
+    )
+
+    assert "drawbox=x=48:y=36:w=1316:h=174" in graph
+    assert "drawbox=x=96:y=62:w=128:h=8" in graph
+    assert "fontfile='C\\:/Windows/Fonts/segoeuil.ttf'" in graph
+    assert "PIZZA WARRIORS / ICECROWN CITADEL / 25 PLAYER" in graph
+    assert "text='LORD MARROWGAR'" in graph
+    assert "x=1100+(216-text_w)/2:y=86+(66-text_h)/2" in graph
+    assert "fontsize=60:x=96:y=118" in graph
 
 
 def test_final_command_uses_constant_quality_and_never_uploads(tmp_path: Path) -> None:
