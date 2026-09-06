@@ -12,6 +12,7 @@ import yaml
 
 from raid_editor.audio.tracks import infer_track_roles
 from raid_editor.config.loader import PROJECT_ROOT, load_project_config
+from raid_editor.highlights.portrait import discover_portrait_recording
 from raid_editor.ingestion.probe import MediaProbe, probe_media
 from raid_editor.util.paths import atomic_write_text
 
@@ -194,6 +195,15 @@ def create_weekly_project_config(
     if not template.is_file():
         raise ValueError(f"Weekly template does not exist: {template}")
     payload = load_project_config(template).model_dump(mode="json")
+    try:
+        vertical_recording = discover_portrait_recording(
+            source,
+            subdirectory=payload["preflight"]["vertical_recording_subdirectory"],
+        )
+    except ValueError:
+        # An ambiguous companion must not block the landscape archive lane.
+        # Native highlight media will require an explicit, verified binding.
+        vertical_recording = None
     label = _date_label(raid_date)
     payload["project"].update(
         {
@@ -207,6 +217,7 @@ def create_weekly_project_config(
     payload["input"].update(
         {
             "recording": str(source),
+            "vertical_recording": str(vertical_recording) if vertical_recording else None,
             "manual_pulls": None,
         }
     )
@@ -247,9 +258,40 @@ def create_weekly_project_config(
         {
             "enabled": True,
             "manual_selection": None,
+            "video_source": "native_vertical",
+            "vertical_offset_hint_seconds": None,
+            "vertical_sync_audio_role": "game",
             "keep_game_audio": True,
             "keep_discord_audio": True,
             "keep_microphone_audio": True,
+            "candidate_pool_size": 200,
+            "maximum_routine_kills": 2,
+            "relative_audio_energy": True,
+            "intelligence": {
+                "enabled": True,
+                "required": False,
+                "whisper_model_path": str(project_root / ".models" / "faster-whisper-medium.en"),
+                "ollama_url": "http://127.0.0.1:11435",
+                "ollama_executable": str(project_root / ".tools" / "ollama-0.33.3" / "ollama.exe"),
+                "ollama_models_path": str(project_root / ".models" / "ollama"),
+                "model": "qwen3.5:9b",
+                "maximum_candidates": 8,
+                "feedback_path": str(project_root / "config" / "highlight-feedback.local.json"),
+                "visual_verification": True,
+            },
+            "speech_triggers": {
+                "enabled": True,
+                "required": False,
+                "backend": "vosk",
+                "model_path": str(project_root / ".models" / "vosk-model-small-en-us-0.15"),
+                "phrases": ["clip it"],
+                "source_roles": ["discord", "microphone"],
+                "minimum_word_confidence": 0.80,
+                "maximum_word_gap_seconds": 0.50,
+                "dedupe_seconds": 6,
+                "maximum_matches": 50,
+                "sample_rate_hz": 16000,
+            },
             "vertical_resolution": "1080x1920",
             "hardware_encoding": True,
         }

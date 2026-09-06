@@ -1,4 +1,13 @@
-# Synthetic benchmark report
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
+# Historical synthetic benchmark report
+
+These measurements describe the July 26, 2026 fixture and workstation below.
+They are preserved as historical evidence, not current CI timing or a forecast
+for full raids. Use [CONTRIBUTING](../CONTRIBUTING.md) for current validation.
 
 Date: 2026-07-26  
 Host: Ryzen 9 7950X3D, 32 GiB RAM, RTX 4070, Windows 11 Pro 25H2  

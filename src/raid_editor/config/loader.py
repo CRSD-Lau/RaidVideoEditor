@@ -43,6 +43,7 @@ def load_project_config(path: Path) -> ProjectConfig:
     normalized_input = config.input.model_copy(
         update={
             "recording": _absolute(base, config.input.recording),
+            "vertical_recording": _absolute(base, config.input.vertical_recording),
             "combat_log": _absolute(base, config.input.combat_log),
             "details_export": _absolute(base, config.input.details_export),
             "skada_export": _absolute(base, config.input.skada_export),
@@ -55,6 +56,28 @@ def load_project_config(path: Path) -> ProjectConfig:
     normalized_highlights = config.highlights.model_copy(
         update={
             "manual_selection": _absolute(base, config.highlights.manual_selection),
+            "intelligence": config.highlights.intelligence.model_copy(
+                update={
+                    "whisper_model_path": _absolute(
+                        base, config.highlights.intelligence.whisper_model_path
+                    ),
+                    "feedback_path": _absolute(base, config.highlights.intelligence.feedback_path),
+                    "ollama_executable": _absolute(
+                        base, config.highlights.intelligence.ollama_executable
+                    ),
+                    "ollama_models_path": _absolute(
+                        base, config.highlights.intelligence.ollama_models_path
+                    ),
+                }
+            ),
+            "speech_triggers": config.highlights.speech_triggers.model_copy(
+                update={
+                    "model_path": _absolute(
+                        base,
+                        config.highlights.speech_triggers.model_path,
+                    )
+                }
+            ),
         }
     )
     normalized_preview = config.preview

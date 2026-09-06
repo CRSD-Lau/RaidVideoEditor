@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import subprocess
 from pathlib import Path
 
 from raid_editor.config.models import HighlightConfig
+from raid_editor.highlights.portrait import PortraitSource
 from raid_editor.ingestion.probe import probe_media
 from raid_editor.models import HighlightCandidate
-from raid_editor.util.paths import atomic_write_json, atomic_write_text, ensure_directory, slugify
+from raid_editor.util.paths import (
+    atomic_write_json,
+    atomic_write_text,
+    ensure_directory,
+    quick_file_fingerprint,
+    slugify,
+)
 
 
 class HighlightRenderError(RuntimeError):
@@ -16,7 +26,14 @@ class HighlightRenderError(RuntimeError):
 
 
 def _escape_drawtext(value: str) -> str:
-    return value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
+    # FFmpeg's filtergraph parser terminates a single-quoted drawtext value at
+    # a straight apostrophe even when it is written as \'.  Normalize it to the
+    # visually equivalent typographic apostrophe, then discard characters that
+    # are unsafe or unsupported in the title-card font.  The original title is
+    # retained unchanged in manifests and posting metadata.
+    normalized = value.replace("'", "’")
+    safe = re.sub(r"[^\w .(),/’\-–—:!?]", " ", normalized, flags=re.UNICODE)
+    return safe.replace("\\", "\\\\").replace(":", "\\:")
 
 
 def _filter_graph(
@@ -25,6 +42,7 @@ def _filter_graph(
     width: int,
     height: int,
     audio_stream_indexes: list[int],
+    native_portrait: bool = False,
 ) -> str:
     foreground_height = round(width * 9 / 16)
     filters = [
@@ -42,10 +60,20 @@ def _filter_graph(
         "text='PIZZA WARRIORS':fontcolor=0xF2C45A:fontsize=30:"
         "x=(w-text_w)/2:y=205,format=yuv420p[vout]",
     ]
+    if native_portrait:
+        # Aitum already composed this picture. Preserve the complete capture;
+        # the landscape title panel would cover its camera/HUD.
+        filters = [
+            f"[0:v:0]setpts=PTS-STARTPTS,"
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            "setsar=1,format=yuv420p[vout]"
+        ]
     audio_labels: list[str] = []
     for number, stream_index in enumerate(audio_stream_indexes):
         filters.append(
-            f"[0:{stream_index}]aresample=48000,"
+            f"[{1 if native_portrait else 0}:{stream_index}]"
+            "asetpts=PTS-STARTPTS,aresample=48000,"
             f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{number}]"
         )
         audio_labels.append(f"[a{number}]")
@@ -59,6 +87,26 @@ def _filter_graph(
     return ";".join(filters)
 
 
+def portrait_presentation_reference(
+    source: PortraitSource,
+    *,
+    audio_stream_indexes: list[int],
+    resolution: str,
+) -> str:
+    """Bind a native review to both sources, timing, audio and composition."""
+    payload = {
+        "schema_version": 1,
+        "source_binding": source.signature,
+        "offset_seconds": source.offset_seconds,
+        "video_source": "native_vertical",
+        "audio_stream_indexes": audio_stream_indexes,
+        "resolution": resolution,
+        "composition": "preserve-native-no-overlays-v1",
+        "audio_mix": "landscape-stems-normalize0-limiter095-v1",
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
 def render_vertical_highlights(
     recording: Path,
     candidates: list[HighlightCandidate],
@@ -69,6 +117,7 @@ def render_vertical_highlights(
     settings: HighlightConfig,
     approved: bool,
     dry_run: bool = False,
+    portrait_source: PortraitSource | None = None,
 ) -> list[Path]:
     """Render explicitly selected portrait clips and a posting package.
 
@@ -97,6 +146,10 @@ def render_vertical_highlights(
         )
     if not audio_stream_indexes:
         raise HighlightRenderError("Highlight export requires at least one approved audio track")
+    if portrait_source is not None and recording.resolve() != (
+        portrait_source.landscape_recording.resolve()
+    ):
+        raise HighlightRenderError("Portrait binding belongs to a different landscape audio source")
     microphone_included = (
         microphone_stream_index is not None and microphone_stream_index in audio_stream_indexes
     )
@@ -114,6 +167,21 @@ def render_vertical_highlights(
     approved_candidates = [candidate for candidate in candidates if candidate.include]
     if not approved_candidates:
         raise HighlightRenderError("No highlight candidates are marked include=true")
+    if settings.video_source == "native_vertical" and portrait_source is None:
+        raise HighlightRenderError("Native portrait export requires a verified portrait source")
+    if portrait_source is not None:
+        # Validate the complete batch before creating any output.
+        for candidate in approved_candidates:
+            portrait_source.validate_window(candidate.start_seconds, candidate.end_seconds)
+    presentation_reference = (
+        portrait_presentation_reference(
+            portrait_source,
+            audio_stream_indexes=audio_stream_indexes,
+            resolution=settings.vertical_resolution,
+        )
+        if portrait_source is not None
+        else None
+    )
     width, height = map(int, settings.vertical_resolution.split("x"))
     root = ensure_directory(destination)
     outputs: list[Path] = []
@@ -126,16 +194,19 @@ def render_vertical_highlights(
             width=width,
             height=height,
             audio_stream_indexes=audio_stream_indexes,
+            native_portrait=portrait_source is not None,
+        )
+        input_args = (
+            portrait_source.input_args(candidate.start_seconds, candidate.end_seconds)
+            if portrait_source is not None
+            else ["-ss", f"{candidate.start_seconds:.3f}", "-i", str(recording)]
         )
         command = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel",
             "error",
-            "-ss",
-            f"{candidate.start_seconds:.3f}",
-            "-i",
-            str(recording),
+            *input_args,
             "-t",
             f"{duration:.3f}",
             "-filter_complex",
@@ -162,7 +233,13 @@ def render_vertical_highlights(
                 "-b:a",
                 "256k",
                 "-movflags",
-                "+faststart",
+                "+faststart+use_metadata_tags",
+                "-metadata",
+                "artist=Neil Mitchell",
+                "-metadata",
+                "author=Neil Mitchell",
+                "-metadata",
+                "last_modified_by=Neil Mitchell",
                 "-y",
                 str(output),
             ]
@@ -182,6 +259,7 @@ def render_vertical_highlights(
                 and probe.video_streams[0].width == width
                 and probe.video_streams[0].height == height
                 and len(probe.audio_streams) == 1
+                and abs(probe.duration_seconds - duration) <= 0.20
             )
             if not valid:
                 raise HighlightRenderError(f"Vertical highlight failed validation: {output}")
@@ -193,6 +271,23 @@ def render_vertical_highlights(
                 "category": candidate.category,
                 "source_start_seconds": candidate.start_seconds,
                 "source_end_seconds": candidate.end_seconds,
+                "video_source": "native_vertical" if portrait_source else "landscape",
+                "video_recording": str(
+                    (portrait_source.recording if portrait_source else recording).resolve()
+                ),
+                "audio_recording": str(recording.resolve()),
+                "portrait_start_seconds": (
+                    candidate.start_seconds - portrait_source.offset_seconds
+                    if portrait_source
+                    else None
+                ),
+                "portrait_end_seconds": (
+                    candidate.end_seconds - portrait_source.offset_seconds
+                    if portrait_source
+                    else None
+                ),
+                "presentation_reference": presentation_reference,
+                "source_binding": portrait_source.signature if portrait_source else None,
                 "audio_stream_indexes": audio_stream_indexes,
                 "microphone_stream_index": microphone_stream_index,
                 "microphone_included": microphone_included,
@@ -200,11 +295,20 @@ def render_vertical_highlights(
                     None if microphone_included else microphone_stream_index
                 ),
                 "output": str(output.resolve()),
+                "output_fingerprint": quick_file_fingerprint(output) if not dry_run else None,
                 "command": command,
                 "rendered": not dry_run,
             }
         )
-    atomic_write_json(root / "manifest.json", {"approved": approved, "clips": manifest_rows})
+    atomic_write_json(
+        root / "manifest.json",
+        {
+            "approved": approved,
+            "clips": manifest_rows,
+            "author": "Neil Mitchell",
+            "last_modified_by": "Neil Mitchell",
+        },
+    )
     captions = [
         "# Shorts and TikTok Package",
         "",

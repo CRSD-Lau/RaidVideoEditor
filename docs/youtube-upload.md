@@ -1,3 +1,8 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # YouTube upload workflow
 
 YouTube delivery is a separate, approval-gated step after the local final master
@@ -27,7 +32,7 @@ audience-retention ratios.
    add the intended YouTube account as a test user.
 4. Create an OAuth client with application type **Desktop app**.
 5. Download its JSON file to
-   `C:\Projects\RaidVideoEditor\secrets\youtube-client.local.json`.
+   `secrets\youtube-client.local.json` inside the cloned repository.
 6. Do not rename its JSON keys, commit it, paste it into chat, or share it.
 
 The `secrets\` directory is git-ignored. On the first approved upload, Google
@@ -41,8 +46,8 @@ the raid editor.
 Generate the exact package that would be used:
 
 ```powershell
-Set-Location C:\Projects\RaidVideoEditor
-uv run raid-editor upload-youtube config\my-raid.local.yaml --dry-run
+# Run from the cloned repository root.
+uv run --no-sync raid-editor upload-youtube config\my-raid.local.yaml --dry-run
 ```
 
 Inspect every file in `output\<project>\youtube\`:
@@ -51,10 +56,14 @@ Inspect every file in `output\<project>\youtube\`:
   audience flags, and requested visibility;
 - `description.md`: copyable description with YouTube chapters;
 - `chapters.txt`: chapter offsets including presentation intro and outro time;
-- `thumbnail-01.jpg` through `thumbnail-03.jpg`: scoreline, first-Heroic, and
-  final-boss 1280x720 candidates constrained to YouTube's 2 MB limit;
+- `thumbnail-01.jpg` through `thumbnail-03.jpg`: intentionally different clean
+  scoreline, boss-action, and guild-story 1280x720 candidates constrained to
+  YouTube's 2 MB limit;
 - `thumbnail-source.jpg`: the configured candidate selected for upload;
 - `thumbnail-test-plan.md`: the Studio Test & Compare plan;
+- `thumbnail-mobile-preview.html`: every candidate at full and phone-feed size;
+- `thumbnail-concepts.json`: concept, distinct hypothesis, source provenance,
+  and SHA-256 for every candidate so experiment treatments remain auditable;
 - `playlist-plan.md` and `analytics-plan.md`: post-publish actions;
 - `studio-details.md`: the exact Studio-only category, requested game rating,
   language, licence, embedding, and end-screen choices. Current Studio may not
@@ -111,7 +120,7 @@ page. The 1440p version may continue processing after the video becomes public.
 For the safe default (`privacy_status: private`):
 
 ```powershell
-uv run raid-editor upload-youtube config\my-raid.local.yaml --approved
+uv run --no-sync raid-editor upload-youtube config\my-raid.local.yaml --approved
 ```
 
 Before authentication, the command confirms the final validation report passed.
@@ -130,7 +139,7 @@ youtube:
 ```
 
 ```powershell
-uv run raid-editor upload-youtube config\my-raid.local.yaml --approved --public-approved
+uv run --no-sync raid-editor upload-youtube config\my-raid.local.yaml --approved --public-approved
 ```
 
 For an unverified API project, leave
@@ -163,9 +172,9 @@ configured title or uses the configured ID. It checks for the video before
 inserting, so repeating the approved command is idempotent:
 
 ```powershell
-uv run raid-editor confirm-youtube-publication config\my-raid.local.yaml `
+uv run --no-sync raid-editor confirm-youtube-publication config\my-raid.local.yaml `
   --video-id VIDEO_ID --maximum-quality 1440p60 --approved
-uv run raid-editor sync-playlist config\my-raid.local.yaml `
+uv run --no-sync raid-editor sync-playlist config\my-raid.local.yaml `
   --video-id VIDEO_ID --approved
 ```
 
@@ -179,10 +188,10 @@ video has enough impressions. The editor does not choose a winner by itself.
 At roughly 48 hours and seven days, produce read-only reports:
 
 ```powershell
-uv run raid-editor youtube-analytics config\my-raid.local.yaml `
+uv run --no-sync raid-editor youtube-analytics config\my-raid.local.yaml `
   --video-id VIDEO_ID --label 48h --studio-impressions 1200 `
   --studio-ctr-percent 5.2
-uv run raid-editor youtube-analytics config\my-raid.local.yaml `
+uv run --no-sync raid-editor youtube-analytics config\my-raid.local.yaml `
   --video-id VIDEO_ID --label 7d --studio-impressions 6000 `
   --studio-ctr-percent 5.8
 ```

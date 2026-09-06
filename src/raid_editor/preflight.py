@@ -156,6 +156,195 @@ def _smoke_checks(
     return checks
 
 
+def _vertical_smoke_checks(
+    recording: Path,
+    config: ProjectConfig,
+    *,
+    landscape_duration: float | None = None,
+) -> list[PreflightCheck]:
+    try:
+        probe = probe_media(recording, force=True)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return [_check("vertical_smoke_recording_readable", False, str(exc))]
+    video = probe.video_streams[0] if probe.video_streams else None
+    expected_width, expected_height = map(
+        int, config.preflight.vertical_expected_resolution.split("x")
+    )
+    age_minutes = (
+        datetime.now(UTC) - datetime.fromtimestamp(recording.stat().st_mtime, tz=UTC)
+    ).total_seconds() / 60
+    required_audio_count = len(config.preflight.vertical_required_recording_tracks)
+    checks = [
+        _check(
+            "vertical_smoke_recording_fresh",
+            age_minutes <= config.preflight.smoke_recording_max_age_minutes,
+            f"last write was {age_minutes:.1f} minutes ago",
+        ),
+        _check(
+            "vertical_smoke_recording_duration",
+            config.preflight.smoke_recording_min_seconds
+            <= probe.duration_seconds
+            <= config.preflight.smoke_recording_max_seconds,
+            f"duration is {probe.duration_seconds:.1f} seconds; expected "
+            f"{config.preflight.smoke_recording_min_seconds:.0f} to "
+            f"{config.preflight.smoke_recording_max_seconds:.0f} seconds",
+        ),
+        _check(
+            "vertical_smoke_recording_geometry",
+            video is not None
+            and video.width == expected_width
+            and video.height == expected_height
+            and video.frame_rate is not None
+            and abs(video.frame_rate - config.preflight.expected_fps) < 0.01,
+            (
+                f"expected {config.preflight.vertical_expected_resolution} at "
+                f"{config.preflight.expected_fps} fps; found "
+                f"{video.width}x{video.height} at {video.frame_rate:.3f} fps"
+                if video is not None and video.frame_rate is not None
+                else "vertical smoke recording has no usable video stream"
+            ),
+        ),
+        _check(
+            "vertical_smoke_recording_audio_tracks",
+            len(probe.audio_streams) >= required_audio_count,
+            f"expected at least {required_audio_count} audio streams; "
+            f"found {len(probe.audio_streams)}",
+        ),
+    ]
+    if landscape_duration is not None:
+        difference = abs(probe.duration_seconds - landscape_duration)
+        checks.append(
+            _check(
+                "dual_smoke_recording_alignment",
+                difference <= 2.0,
+                f"landscape/portrait duration difference is {difference:.3f} seconds; "
+                "expected no more than 2.000 seconds",
+            )
+        )
+    return checks
+
+
+def _aitum_vertical_checks(
+    profile_directory: Path,
+    record_path: Path | None,
+    config: ProjectConfig,
+) -> list[PreflightCheck]:
+    aitum_path = profile_directory / config.preflight.aitum_config_file
+    try:
+        payload = json.loads(aitum_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [_check("aitum_vertical_configuration", False, str(exc))]
+
+    canvases = payload.get("canvas", [])
+    canvas = next(
+        (
+            value
+            for value in canvases
+            if isinstance(value, dict)
+            and value.get("name") == config.preflight.vertical_canvas_name
+        ),
+        None,
+    )
+    expected_width, expected_height = map(
+        int, config.preflight.vertical_expected_resolution.split("x")
+    )
+    outputs = payload.get("outputs", [])
+    output = next(
+        (
+            value
+            for value in outputs
+            if isinstance(value, dict)
+            and value.get("name") == config.preflight.vertical_recording_output_name
+        ),
+        None,
+    )
+    canvas_ok = bool(
+        canvas and canvas.get("width") == expected_width and canvas.get("height") == expected_height
+    )
+    canvas_detail = (
+        f"expected {config.preflight.vertical_canvas_name} at "
+        f"{config.preflight.vertical_expected_resolution}; found "
+        f"{canvas.get('width')}x{canvas.get('height')}"
+        if canvas
+        else "canvas not found"
+    )
+    checks = [_check("aitum_vertical_canvas", canvas_ok, canvas_detail)]
+    if output is None:
+        checks.append(
+            _check(
+                "aitum_vertical_recording_output",
+                False,
+                f"output not found: {config.preflight.vertical_recording_output_name}",
+            )
+        )
+        return checks
+
+    expected_path = (
+        record_path / config.preflight.vertical_recording_subdirectory
+        if record_path is not None
+        else None
+    )
+    output_path = Path(str(output.get("path", "")))
+    path_ok = expected_path is not None and output_path.resolve() == expected_path.resolve()
+    tracks_mask = int(output.get("audio_tracks", 0))
+    missing_tracks = [
+        track
+        for track in config.preflight.vertical_required_recording_tracks
+        if not _track_enabled(tracks_mask, track)
+    ]
+    video_settings = output.get("video_encoder_settings", {})
+    if not isinstance(video_settings, dict):
+        video_settings = {}
+    checks.extend(
+        [
+            _check(
+                "aitum_vertical_recording_output",
+                output.get("enabled") is True
+                and output.get("type") == "record"
+                and output.get("canvas") == config.preflight.vertical_canvas_name
+                and output.get("format") in {"hybrid_mp4", "mkv"},
+                f"enabled={output.get('enabled')}; type={output.get('type')}; "
+                f"canvas={output.get('canvas')}; format={output.get('format')}",
+            ),
+            _check(
+                "aitum_vertical_recording_path",
+                path_ok and output_path.is_dir(),
+                f"expected {expected_path}; configured {output_path}",
+            ),
+            _check(
+                "aitum_vertical_video_encoder",
+                output.get("advanced") is True
+                and output.get("video_encoder") == config.preflight.vertical_video_encoder
+                and video_settings.get("rate_control") == config.preflight.vertical_rate_control
+                and video_settings.get("cqp") == config.preflight.vertical_quality,
+                f"encoder={output.get('video_encoder')}; "
+                f"rate_control={video_settings.get('rate_control')}; "
+                f"quality={video_settings.get('cqp')}",
+            ),
+            _check(
+                "aitum_vertical_audio_tracks",
+                not missing_tracks,
+                f"recording mask {tracks_mask}; missing tracks {missing_tracks or 'none'}",
+            ),
+            _check(
+                "aitum_start_all_recordings_hotkey",
+                bool(payload.get("start_all_recordings_hotkey")),
+                "a dedicated Start All Recordings hotkey is configured"
+                if payload.get("start_all_recordings_hotkey")
+                else "Start All Recordings has no hotkey",
+            ),
+            _check(
+                "aitum_vertical_stop_hotkey",
+                bool(output.get("stop_hotkey")),
+                "a dedicated portrait Stop Recording hotkey is configured"
+                if output.get("stop_hotkey")
+                else "portrait Stop Recording has no hotkey",
+            ),
+        ]
+    )
+    return checks
+
+
 def run_preflight(
     config: ProjectConfig,
     *,
@@ -163,6 +352,7 @@ def run_preflight(
     destination_markdown: Path,
     obs_root: Path | None = None,
     smoke_recording: Path | None = None,
+    vertical_smoke_recording: Path | None = None,
 ) -> PreflightReport:
     """Inspect local configuration without changing OBS, WoW, or recordings.
 
@@ -172,6 +362,7 @@ def run_preflight(
         destination_markdown: Human-readable report destination.
         obs_root: Optional OBS root used by tests or alternate installs.
         smoke_recording: Optional fresh short recording to probe end to end.
+        vertical_smoke_recording: Optional matching Aitum portrait smoke file.
 
     Returns:
         A passed/failed report; warnings do not fail the overall status.
@@ -216,7 +407,9 @@ def run_preflight(
             )
         )
 
-    profile_path = root / "basic" / "profiles" / str(expected_profile) / "basic.ini"
+    profile_directory = root / "basic" / "profiles" / str(expected_profile)
+    profile_path = profile_directory / "basic.ini"
+    record_path: Path | None = None
     if profile_path.is_file():
         profile = _load_ini(profile_path)
         output_width = profile.getint("Video", "OutputCX", fallback=0)
@@ -286,8 +479,22 @@ def run_preflight(
                 "tracks " + ", ".join(name_details),
             )
         )
+        if config.preflight.require_vertical_recording:
+            stop_recording_hotkey = profile.get("Hotkeys", "OBSBasic.StopRecording", fallback="")
+            checks.append(
+                _check(
+                    "obs_stop_recording_hotkey",
+                    bool(stop_recording_hotkey),
+                    "a dedicated Stop Recording hotkey is configured"
+                    if stop_recording_hotkey
+                    else "Stop Recording has no hotkey",
+                )
+            )
     else:
         checks.append(_check("obs_profile_readable", False, f"missing profile: {profile_path}"))
+
+    if config.preflight.require_vertical_recording:
+        checks.extend(_aitum_vertical_checks(profile_directory, record_path, config))
 
     collection_path = root / "basic" / "scenes" / str(expected_collection)
     if collection_path.is_file():
@@ -370,6 +577,7 @@ def run_preflight(
             )
         )
 
+    landscape_duration: float | None = None
     if smoke_recording is None:
         checks.append(
             _check(
@@ -380,7 +588,32 @@ def run_preflight(
             )
         )
     else:
-        checks.extend(_smoke_checks(smoke_recording.expanduser().resolve(), config))
+        resolved_smoke = smoke_recording.expanduser().resolve()
+        checks.extend(_smoke_checks(resolved_smoke, config))
+        try:
+            landscape_duration = probe_media(resolved_smoke, force=True).duration_seconds
+        except (OSError, ValueError, RuntimeError):
+            landscape_duration = None
+
+    if config.preflight.require_vertical_recording:
+        if vertical_smoke_recording is None:
+            checks.append(
+                _check(
+                    "vertical_smoke_recording",
+                    False,
+                    "No portrait smoke recording supplied; pass "
+                    "--vertical-smoke-recording with the matching Aitum file",
+                    warning=smoke_recording is None,
+                )
+            )
+        else:
+            checks.extend(
+                _vertical_smoke_checks(
+                    vertical_smoke_recording.expanduser().resolve(),
+                    config,
+                    landscape_duration=landscape_duration,
+                )
+            )
 
     report = PreflightReport(
         status="failed" if any(item.status == "failed" for item in checks) else "passed",

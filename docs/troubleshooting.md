@@ -1,37 +1,44 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # Troubleshooting
 
-Run commands from `C:\Projects\RaidVideoEditor` and add global `--verbose` before
+Run commands from the cloned repository root and add global `--verbose` before
 the subcommand when more context is useful:
 
 ```powershell
-uv run raid-editor --verbose analyse config\my-raid.local.yaml
+uv run --no-sync raid-editor --verbose analyse config\my-raid.local.yaml
 ```
 
 ## Environment checks
 
 ```powershell
-py -3.12 --version
 uv --version
-uv run python --version
+uv run --no-sync python --version
 ffmpeg -version
 ffprobe -version
-uv run raid-editor --help
+uv run --no-sync raid-editor --help
 ```
 
-The first and third Python versions should be 3.12. Resolve integration is the
-only component that uses `py -3.13`.
+The project interpreter must be Python 3.12 or newer and compatible with the
+locked dependencies. Preserve a working compatible environment. The Resolve
+bridge separately uses `py -3.13` for its recorded host compatibility boundary.
 
 ### `ffmpeg` or `ffprobe` is not installed or not available on PATH
 
 Install a Windows build that includes both executables, open a new PowerShell
-session, and rerun the checks. The CLI does not download tools or search
+session, and rerun the checks. The CLI does not download media tools or search
 arbitrary directories.
 
 ### `uv sync` selects the wrong Python
 
+For a new environment, explicitly selecting a supported interpreter can help:
+
 ```powershell
 uv sync --python 3.12 --extra dev --frozen
-uv run python --version
+uv run --no-sync python --version
 ```
 
 If an incompatible `.venv` already exists, inspect it before removal. Do not
@@ -73,7 +80,7 @@ Set at least one valid `game_track` or `discord_track` and leave its correspondi
 Run:
 
 ```powershell
-uv run raid-editor inspect config\my-raid.local.yaml --force --open-review
+uv run --no-sync raid-editor inspect config\my-raid.local.yaml --force --open-review
 ```
 
 Listen to samples and set the absolute FFprobe stream index. Do not use the OBS
@@ -81,8 +88,10 @@ track label or audio ordinal by assumption.
 
 ### Every track contains the microphone
 
-The current OBS profile routes `Desktop Audio` and `Mic/Aux` to all six tracks.
-No config setting can remove voice already mixed into every stream. Stop and
+If `Desktop Audio` and `Mic/Aux` are routed to every enabled track, those tracks
+can all contain the same mixed voices. Verify by listening; do not infer the
+routing from an earlier recording. No config setting can remove voice already
+mixed into every stream. Stop and
 make a new recording after applying the separate-track setup in
 [obs-recording-setup.md](obs-recording-setup.md).
 
@@ -171,6 +180,13 @@ insufficient.
 
 ### FFmpeg fails creating `source-microphone-free.mov`
 
+This full-length copy is needed only for an explicit Resolve/FCPXML export
+(`build-timeline` or `create-resolve-project`). The normal FFmpeg preview,
+validation, final-render, upload and analytics paths do not create it. Do not
+run `build-timeline` as a prerequisite for those commands when disk is tight.
+They build their timeline directly from the original recording and select the
+retained audio streams without duplicating the source.
+
 Check:
 
 - the retained stream indexes;
@@ -185,7 +201,8 @@ may not remux to MOV.
 ### `render-preview --dry-run` created files
 
 Expected. Dry-run prevents the preview MP4 process but still prepares the
-timeline, sidecar, reports, filter script, and command.
+timeline, reports, filter script, and command. It does not create the full-length
+Resolve sidecar.
 
 ### Preview rendering is slow despite `hardware_encoding: true`
 
@@ -248,10 +265,10 @@ Check:
 
 ```powershell
 py -3.13 --version
-uv run raid-editor create-resolve-project config\my-raid.local.yaml --dry-run
+uv run --no-sync raid-editor create-resolve-project config\my-raid.local.yaml --dry-run
 ```
 
-The main Python 3.12 environment cannot substitute for the host-specific 3.13
+The main application environment cannot substitute for the host-specific 3.13
 bridge.
 
 ### `Resolve API connection unavailable`
@@ -274,17 +291,99 @@ absolute path. Current MOV/HEVC compatibility with the apparent non-Studio
 edition is unproven. Never relink to the original OBS source merely to make the
 timeline online; that source can contain microphone audio.
 
+## Spoken highlight trigger problems
+
+### Review says `unavailable`
+
+Run `uv sync --extra speech`, confirm
+`.models\vosk-model-small-en-us-0.15\am\final.mdl` exists, and verify
+`highlights.speech_triggers.model_path`. An unavailable run is deliberately not
+cached as a successful zero-match scan.
+
+### Review says `partial` or `failed`
+
+Read `reports\speech-trigger-status.md`. Confirm that the Discord and microphone
+roles point to distinct absolute FFprobe stream indexes and that the source was
+not moved while FFmpeg was reading it. The ordinary highlight heuristics still
+run when `required: false`.
+
+### Someone said `clip it`, but no proposal appears
+
+Confirm the phrase is audible on either isolated voice stem, not only Full Mix.
+Overlapping voices, compression, quiet delivery, or a word confidence below
+`minimum_word_confidence` can cause a miss. Do not enable fuzzy matching merely
+to force a result; add the moment manually in the review override or calibrate
+the threshold against private representative samples.
+
+### Too many spoken proposals
+
+Raise `minimum_word_confidence` or shorten `dedupe_seconds` only after listening
+to the false positives. If `maximum_matches` is reached, status becomes
+`truncated`; the workflow never describes that as complete coverage.
+
+## Review timer advances but the picture stays black
+
+Individual boss and highlight reviews now default to VP9/Opus WebM via
+`preview.review_media_format: webm`. This is independent of the assembled movie
+preview, 1440p master, and H.264/AAC social delivery files. The September 4 review
+MP4s contained valid gameplay when decoded independently, but appeared black in
+the in-app player; a WebM sample was the working compatibility option. The exact
+browser decoder/compositor cause was not established.
+
+Regenerate the affected review lane and reload its page. Full boss windows and
+highlight audio routing are preserved. The format and encoding settings are in
+the review-cache signatures, so switching formats cannot silently reuse old MP4
+proxies. Previous media is retained. `mp4` remains an explicit compatibility
+option for other browsers. A direct clip link and visible media-error message
+are available on both review pages. Always confirm actual browser playback;
+successful FFmpeg decoding alone does not prove that a browser displayed it.
+
+## Final validation is unbound or the final master changed
+
+YouTube packaging and upload, including `--dry-run`, require a passed
+`final-validation.json` bound to the selected final file's absolute path and
+full SHA-256. An older report containing only `status: passed` cannot validate
+a substituted or newly discovered MP4. The final renderer also refuses to reuse
+an old master whose render manifest lacks a matching artifact binding.
+
+Preserve the old master and its manifest at a separate, explicitly chosen path,
+then render the reviewed final again with
+`uv run --no-sync raid-editor render-final CONFIG --approved`. That generates
+fresh file-bound validation. `validate CONFIG` checks the movie preview and
+does not upgrade an unbound final report. Do not hand-edit hashes or relabel a
+different file to bypass the check. Existing publication evidence should be
+preserved; this error does not authorize another upload or deletion.
+
+## Native portrait review cannot be prepared
+
+Inspect `highlights/portrait-source-status.json` and the native-source detail
+before changing the config. An unbound or ambiguous companion needs the exact
+same-session `input.vertical_recording`; choosing the newest portrait file is
+not sufficient. Candidate timestamps stay on the landscape clock.
+
+Shared-audio verification must pass at separated points, and every full clip
+must fit in both recordings. An offset hint only centers the search; it cannot
+override silence, ambiguity, drift, or missing coverage. Native mode does not
+fall back automatically. Continue eligible landscape work independently and
+resolve the media blocker before approving native clips. See the
+[native portrait contract](highlight-intelligence.md#use-the-recorded-portrait-composition).
+
+Changing the source pair, measured offset, or audio mix requires reviewing the
+new presentation. Saved editorial ratings can survive that change while export
+checkboxes are cleared; this preserves preferences without approving different
+footage.
+
 ## Still blocked
 
 Collect:
 
 - the exact command;
 - terminal output with `--verbose`;
-- `uv run python --version`;
+- `uv run --no-sync python --version`;
 - first lines of `ffmpeg -version` and `ffprobe -version`;
 - config with private paths/names redacted;
 - relevant `analysis` or `reports` file; and
-- whether the source is the current MOV/HEVC six-track recording.
+- the actual source container, video codec/geometry, and audio stream layout.
 
 Do not attach raw microphone samples, combat logs, Skada files, tokens, or
 private license documents unless deliberately redacted.

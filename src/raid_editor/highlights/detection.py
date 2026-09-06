@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 import subprocess
-from collections import Counter
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -84,6 +86,7 @@ def audio_energy_signals(
     stream_index: int,
     threshold_db: float,
     kind: str,
+    relative_energy: bool = True,
 ) -> list[Signal]:
     """Extract and suppress audio-energy peaks from one absolute stream index.
 
@@ -91,7 +94,8 @@ def audio_energy_signals(
         recording: Source media file.
         stream_index: Absolute FFprobe stream index to analyze.
         threshold_db: Minimum one-second RMS level in decibels.
-        kind: Signal role, normally ``game`` or ``discord``.
+        kind: Distinct game, Discord, or microphone signal role.
+        relative_energy: Require a rise above the surrounding local background.
 
     Returns:
         Chronological energy signals spaced at least four seconds apart.
@@ -121,16 +125,35 @@ def audio_energy_signals(
         ]
     )
     points = _paired_metadata(output, _RMS)
-    eligible = [
-        Signal(
-            seconds=seconds,
-            kind=kind,
-            strength=min(1.0, 0.35 + max(0.0, rms - threshold_db) / 18.0),
-            detail=f"{kind}_rms:{rms:.1f}dB",
+    eligible: list[Signal] = []
+    left = right = 0
+    for seconds, rms in points:
+        if rms < threshold_db:
+            continue
+        while left < len(points) and points[left][0] < seconds - 30:
+            left += 1
+        while right < len(points) and points[right][0] <= seconds + 30:
+            right += 1
+        # Exclude the immediate event when estimating its local background. A
+        # short or mostly silent neighborhood falls back to the absolute floor.
+        background = [level for time, level in points[left:right] if abs(time - seconds) >= 5]
+        baseline = max(threshold_db - 12.0, median(background)) if background else threshold_db
+        rise = rms - baseline
+        if relative_energy and len(background) >= 5 and rise < 3.0:
+            continue
+        excess = rise if relative_energy else rms - threshold_db
+        eligible.append(
+            Signal(
+                seconds=seconds,
+                kind=kind,
+                strength=min(1.0, 0.35 + max(0.0, excess) / 18.0),
+                detail=(
+                    f"{kind}_rms:{rms:.1f}dB;local_rise:{rise:.1f}dB"
+                    if relative_energy
+                    else f"{kind}_rms:{rms:.1f}dB"
+                ),
+            )
         )
-        for seconds, rms in points
-        if rms >= threshold_db
-    ]
     return _suppress_nearby(eligible, spacing_seconds=4.0)
 
 
@@ -193,6 +216,39 @@ def motion_signals(
     )
 
 
+def _player_death_destination(fields: tuple[str, ...]) -> str | None:
+    """Accept only known CLEU layouts with matching destination type evidence.
+
+    The legacy layout is event, source GUID/name/flags, destination GUID/name/flags.
+    Modern CLEU adds hideCaster and source/destination raid flags. In particular,
+    the legacy null SOURCE GUID must never be interpreted as the dead player.
+    """
+
+    if len(fields) == 7 and fields[0] == "UNIT_DIED":
+        guid, flags_text = fields[4], fields[6]
+    elif len(fields) == 10 and fields[0] == "UNIT_DIED" and fields[1] in {"true", "false"}:
+        guid, flags_text = fields[6], fields[8]
+        try:
+            for index in (4, 5, 9):
+                int(fields[index], 16)
+        except ValueError:
+            return None
+    else:
+        return None
+    try:
+        flags = int(flags_text, 16)
+    except ValueError:
+        return None
+    # COMBATLOG_OBJECT_TYPE_PLAYER, excluding conflicting NPC/pet/guardian/object types.
+    if not flags & 0x400 or flags & 0xF800:
+        return None
+    if re.fullmatch(r"Player-\d+-[0-9a-fA-F]+", guid):
+        return guid
+    if re.fullmatch(r"0[xX](?:06[0-9a-fA-F]{14}|0000000000[0-9a-fA-F]{6})", guid):
+        return guid if int(guid, 16) != 0 else None
+    return None
+
+
 def combat_pressure_signals(
     combat_log: Path | None,
     *,
@@ -214,28 +270,29 @@ def combat_pressure_signals(
 
     if combat_log is None or recording_started_at is None:
         return []
-    deaths: Counter[int] = Counter()
+    deaths: dict[int, list[float]] = defaultdict(list)
     for event in iter_timed_log_events(
         combat_log,
         recording_started_at=recording_started_at,
         recording_duration_seconds=recording_duration_seconds,
         recording_offset_seconds=recording_offset_seconds,
+        margin_seconds=0.0,
     ):
         if event.event != "UNIT_DIED":
             continue
-        if any(
-            field.upper().startswith(("PLAYER-", "0X06", "0X0000000000")) for field in event.fields
-        ):
-            deaths[math.floor(max(0.0, event.video_seconds) / 8.0)] += 1
+        if not 0 <= event.video_seconds <= recording_duration_seconds:
+            continue
+        if _player_death_destination(event.fields) is not None:
+            deaths[math.floor(event.video_seconds / 8.0)].append(event.video_seconds)
     return [
         Signal(
-            seconds=bucket * 8.0 + 4.0,
+            seconds=sum(times) / len(times),
             kind="raid_deaths",
-            strength=min(1.0, 0.35 + count * 0.13),
-            detail=f"player_deaths_8s:{count}",
+            strength=min(1.0, 0.35 + len(times) * 0.13),
+            detail=f"player_deaths_8s:{len(times)}",
         )
-        for bucket, count in deaths.items()
-        if count >= 2
+        for _, times in sorted(deaths.items())
+        if len(times) >= 2
     ]
 
 
@@ -256,8 +313,6 @@ def kill_climax_signals(pulls: list[PullCandidate]) -> list[Signal]:
         strength = 0.64
         if pull.difficulty.endswith("H"):
             strength += 0.14
-        if pull.encounter and "lich king" in pull.encounter.casefold():
-            strength += 0.12
         signals.append(
             Signal(
                 seconds=max(pull.start_seconds, pull.end_seconds - 7.0),
@@ -294,34 +349,36 @@ def _fuse(signals: list[Signal], *, window_seconds: float) -> list[list[Signal]]
 
 
 def _category(group: list[Signal]) -> HighlightCategory:
+    """Use provisional categories without claiming humor or a successful rescue."""
+
     kinds = {signal.kind for signal in group}
-    if "kill_climax" in kinds and "raid_deaths" in kinds:
-        return "clutch"
-    if "kill_climax" in kinds and "discord" in kinds:
-        return "reaction"
-    if "discord" in kinds and "motion" in kinds and "kill_climax" not in kinds:
-        return "funny"
     if "raid_deaths" in kinds or "kill_climax" in kinds:
         return "intense"
+    if kinds & {"speech_clip_command", "discord", "microphone"}:
+        return "reaction"
     if "motion" in kinds:
         return "movement"
     return "reaction"
 
 
 def _score(group: list[Signal]) -> float:
+    """Return a monotonic ranking value, not a probability or ASR confidence."""
+
     weights = {
         "discord": 0.36,
+        "microphone": 0.36,
         "game": 0.16,
         "motion": 0.22,
         "raid_deaths": 0.36,
-        "kill_climax": 0.54,
+        "kill_climax": 0.22,
+        "speech_clip_command": 1.0,
     }
     strongest: dict[str, float] = {}
     for signal in group:
         strongest[signal.kind] = max(strongest.get(signal.kind, 0.0), signal.strength)
     raw = sum(weights.get(kind, 0.1) * strength for kind, strength in strongest.items())
     diversity_bonus = max(0, len(strongest) - 1) * 0.08
-    return min(1.0, raw + diversity_bonus)
+    return -math.expm1(-(raw + diversity_bonus))
 
 
 def _encounter_at(seconds: float, pulls: list[PullCandidate]) -> str | None:
@@ -343,12 +400,219 @@ def _encounter_at(seconds: float, pulls: list[PullCandidate]) -> str | None:
     return min(nearby)[1] if nearby else None
 
 
+def _is_spoken(candidate: HighlightCandidate) -> bool:
+    return candidate.origin == "speech" or any(
+        signal.startswith("speech_clip_command:") for signal in candidate.signals
+    )
+
+
+def _routine_kill(candidate: HighlightCandidate) -> bool:
+    """A heuristic finish with no separate voice or player-pressure evidence."""
+
+    return (
+        candidate.origin == "heuristic"
+        and any(signal.startswith("boss_kill:") for signal in candidate.signals)
+        and not any(
+            signal.startswith(("player_deaths_8s:", "discord_rms:", "microphone_rms:"))
+            for signal in candidate.signals
+        )
+    )
+
+
+def _overlapping_event(
+    candidate: HighlightCandidate, kept: HighlightCandidate, *, spacing_seconds: float
+) -> bool:
+    overlap = min(candidate.end_seconds, kept.end_seconds) - max(
+        candidate.start_seconds, kept.start_seconds
+    )
+    shorter = min(
+        candidate.end_seconds - candidate.start_seconds,
+        kept.end_seconds - kept.start_seconds,
+    )
+    return (
+        abs(candidate.peak_seconds - kept.peak_seconds) < spacing_seconds
+        or overlap / shorter >= 0.65
+    )
+
+
+def _number_candidates(candidates: list[HighlightCandidate]) -> list[HighlightCandidate]:
+    """Assign display order while retaining each original moment's feedback identity."""
+
+    def identity(candidate: HighlightCandidate) -> str:
+        if candidate.review_identity is not None:
+            return candidate.review_identity
+        material = {
+            "origin": candidate.origin,
+            "start_seconds": candidate.start_seconds,
+            "end_seconds": candidate.end_seconds,
+            "peak_seconds": candidate.peak_seconds,
+            "semantic_kinds": sorted(
+                {signal for signal in candidate.signals if signal.startswith("semantic_kind:")}
+            ),
+        }
+        return hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    return [
+        candidate.model_copy(
+            update={
+                "id": f"highlight-{index:03d}",
+                "review_identity": identity(candidate),
+            }
+        )
+        for index, candidate in enumerate(
+            sorted(candidates, key=lambda item: item.peak_seconds), start=1
+        )
+    ]
+
+
+def _enrich_spoken_candidates(
+    candidates: list[HighlightCandidate], *, settings: HighlightConfig
+) -> tuple[list[HighlightCandidate], set[int]]:
+    """Attach supported story context without replacing an explicit voice anchor."""
+
+    semantic = sorted(
+        (
+            (index, candidate)
+            for index, candidate in enumerate(candidates)
+            if candidate.origin == "semantic"
+            and candidate.score >= settings.intelligence.minimum_score
+            and candidate.confidence is not None
+            and candidate.confidence >= settings.intelligence.minimum_score
+            and candidate.setup_seconds is not None
+            and candidate.payoff_seconds is not None
+            and candidate.rationale
+            and candidate.signals
+            and candidate.review_rating != "reject"
+            and candidate.rejection_reason == "unset"
+        ),
+        key=lambda pair: pair[1].score,
+        reverse=True,
+    )
+    spoken: list[HighlightCandidate] = []
+    consumed: set[int] = set()
+    for command in (candidate for candidate in candidates if _is_spoken(candidate)):
+        enriched = command
+        for index, context in semantic:
+            if not _overlapping_event(context, command, spacing_seconds=0):
+                continue
+            start = min(command.start_seconds, context.start_seconds)
+            end = max(command.end_seconds, context.end_seconds)
+            maximum = max(
+                command.end_seconds - command.start_seconds,
+                settings.intelligence.maximum_clip_seconds,
+            )
+            if end - start > maximum:
+                continue
+            rationale = " ".join(item for item in (command.rationale, context.rationale) if item)[
+                :1200
+            ]
+            provenance = (
+                f"semantic_context:{context.setup_seconds:.3f}-{context.payoff_seconds:.3f}:"
+                f"score:{context.score:.3f}"
+            )
+            enriched = HighlightCandidate.model_validate(
+                {
+                    **command.model_dump(),
+                    "origin": "speech",
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "setup_seconds": context.setup_seconds,
+                    "payoff_seconds": context.payoff_seconds,
+                    "rationale": rationale,
+                    "signals": list(
+                        dict.fromkeys([*command.signals, provenance, *context.signals])
+                    ),
+                    "include": False,
+                }
+            )
+            consumed.add(index)
+            break
+        spoken.append(enriched)
+    return spoken, consumed
+
+
+def select_highlight_candidates(
+    candidates: list[HighlightCandidate], *, settings: HighlightConfig
+) -> list[HighlightCandidate]:
+    """Shortlist a combined discovery pool without discarding spoken intent.
+
+    Explicit command anchors remain review-only proposals outside all heuristic
+    limits, even when two commands overlap. Other proposals must meet the score
+    floor; no quota is filled with weak or duplicate material.
+    """
+
+    spoken, consumed = _enrich_spoken_candidates(candidates, settings=settings)
+    ranked = sorted(
+        (
+            candidate
+            for index, candidate in enumerate(candidates)
+            if not _is_spoken(candidate)
+            and index not in consumed
+            and candidate.score >= settings.minimum_score
+            and candidate.review_rating != "reject"
+            and candidate.rejection_reason == "unset"
+        ),
+        key=lambda item: (item.score, item.origin == "semantic"),
+        reverse=True,
+    )
+    selected = list(spoken)
+    routine_kills = 0
+    selected_other = 0
+    for candidate in ranked:
+        is_routine = _routine_kill(candidate)
+        if is_routine and routine_kills >= settings.maximum_routine_kills:
+            continue
+        if any(
+            _overlapping_event(candidate, kept, spacing_seconds=settings.minimum_spacing_seconds)
+            for kept in selected
+            # If a semantic story could not fit the command's context bound,
+            # retain it separately instead of discarding the richer evidence.
+            if not (candidate.origin == "semantic" and _is_spoken(kept))
+        ):
+            continue
+        selected.append(candidate)
+        selected_other += 1
+        routine_kills += is_routine
+        if selected_other >= settings.maximum_candidates:
+            break
+    return _number_candidates(selected)
+
+
+def _event_window(
+    group: list[Signal], *, duration: float, settings: HighlightConfig
+) -> tuple[float, float, float]:
+    # Event anchors take priority over a centroid that can drift into nearby
+    # unrelated movement. Timing is still provisional until semantic review.
+    priorities = {"speech_clip_command": 4, "kill_climax": 3, "raid_deaths": 2}
+    anchor = max(group, key=lambda item: (priorities.get(item.kind, 1), item.strength))
+    peak = anchor.seconds
+    first, last = min(item.seconds for item in group), max(item.seconds for item in group)
+    start = max(0.0, first - settings.lead_in_seconds)
+    end = min(duration, last + settings.lead_out_seconds)
+    maximum = min(duration, settings.review_clip_seconds)
+    if end - start > maximum:
+        if last - first <= maximum:
+            # Preserve every observed signal when the evidence span fits.
+            start = max(last - maximum, min(start, first))
+        else:
+            start = peak - min(settings.lead_in_seconds, maximum * 0.65)
+        start = max(0.0, min(start, duration - maximum))
+        end = start + maximum
+    if end <= start:
+        start = max(0.0, peak - min(1.0, maximum))
+        end = min(duration, start + min(1.0, maximum))
+    return peak, start, end
+
+
 def build_highlight_candidates(
     signals: list[Signal],
     pulls: list[PullCandidate],
     *,
     recording_duration_seconds: float,
     settings: HighlightConfig,
+    limit_candidates: bool = True,
 ) -> list[HighlightCandidate]:
     """Fuse raw signals into bounded, spaced, unapproved review candidates.
 
@@ -357,30 +621,69 @@ def build_highlight_candidates(
         pulls: Reviewed pulls used for encounter context.
         recording_duration_seconds: Upper bound for candidate windows.
         settings: Fusion, duration, spacing, score, and count policy.
+        limit_candidates: False retains a larger discovery pool for semantic review.
 
     Returns:
         Chronological candidates with stable sequential IDs and ``include=false``.
     """
 
+    if not math.isfinite(recording_duration_seconds) or recording_duration_seconds <= 0:
+        raise HighlightAnalysisError("Highlight recording duration must be positive and finite")
+    invalid_commands = [
+        signal
+        for signal in signals
+        if signal.kind == "speech_clip_command"
+        and not 0 <= signal.seconds <= recording_duration_seconds
+    ]
+    if invalid_commands:
+        raise HighlightAnalysisError("A spoken command falls outside the recording; check timing")
+    signals = [
+        signal
+        for signal in signals
+        if 0 <= signal.seconds <= recording_duration_seconds
+        and math.isfinite(signal.strength)
+        and signal.strength > 0
+    ]
     candidates: list[HighlightCandidate] = []
-    for group in _fuse(signals, window_seconds=settings.fusion_window_seconds):
-        score = _score(group)
-        if score < settings.minimum_score:
-            continue
-        peak = sum(item.seconds * item.strength for item in group) / sum(
-            item.strength for item in group
+    spoken_groups = [[signal] for signal in signals if signal.kind == "speech_clip_command"]
+    heuristic_groups = _fuse(
+        [signal for signal in signals if signal.kind != "speech_clip_command"],
+        window_seconds=settings.fusion_window_seconds,
+    )
+    for group in [*spoken_groups, *heuristic_groups]:
+        spoken_command = next(
+            (signal for signal in group if signal.kind == "speech_clip_command"),
+            None,
         )
-        start = max(0.0, peak - settings.lead_in_seconds)
-        end = min(recording_duration_seconds, peak + settings.lead_out_seconds)
-        if end - start > settings.review_clip_seconds:
-            end = min(recording_duration_seconds, start + settings.review_clip_seconds)
+        score = _score(group)
+        if limit_candidates and spoken_command is None and score < settings.minimum_score:
+            continue
+        peak, start, end = _event_window(
+            group, duration=recording_duration_seconds, settings=settings
+        )
         encounter = _encounter_at(peak, pulls)
         category = _category(group)
-        title = (
-            f"{encounter} {category.title()} Moment"
-            if encounter
-            else f"Raid {category.title()} Moment"
-        )
+        if spoken_command is not None:
+            title = f"{encounter or 'Raid'} Clip-It Moment"
+            notes = (
+                "Exact spoken 'clip it' command detected locally; review the preceding "
+                "moment and audio before approval."
+            )
+        else:
+            kinds = {signal.kind for signal in group}
+            label = (
+                "Player Death Cluster"
+                if "raid_deaths" in kinds
+                else "Boss Finish"
+                if "kill_climax" in kinds
+                else "Voice Activity"
+                if kinds & {"discord", "microphone"}
+                else "Scene Change"
+                if "motion" in kinds
+                else "Game Audio Activity"
+            )
+            title = f"{encounter or 'Raid'} {label} Candidate"
+            notes = "Provisional signal-based suggestion; review the event and its context."
         candidates.append(
             HighlightCandidate(
                 id="pending",
@@ -393,33 +696,26 @@ def build_highlight_candidates(
                 encounter=encounter,
                 include=False,
                 title=title,
-                notes="Automatically proposed; review reaction audio and framing before approval.",
+                notes=notes,
+                origin="speech" if spoken_command is not None else "heuristic",
+                confidence=spoken_command.strength if spoken_command is not None else None,
+                rationale=(
+                    "An explicit spoken command marks this moment for review."
+                    if spoken_command is not None
+                    else "Timing comes from the listed audio, visual, and combat signals."
+                ),
             )
         )
-    ranked = sorted(candidates, key=lambda item: item.score, reverse=True)
-    final_boss = [
-        candidate
-        for candidate in ranked
-        if any(
-            signal.startswith("boss_kill:") and "lich king" in signal.casefold()
-            for signal in candidate.signals
-        )
-    ]
-    ordered = [*final_boss, *(candidate for candidate in ranked if candidate not in final_boss)]
-    selected: list[HighlightCandidate] = []
-    for candidate in ordered:
-        if all(
-            abs(candidate.peak_seconds - kept.peak_seconds) >= settings.minimum_spacing_seconds
-            for kept in selected
-        ):
-            selected.append(candidate)
-        if len(selected) >= settings.maximum_candidates:
-            break
-    selected.sort(key=lambda item: item.peak_seconds)
-    return [
-        candidate.model_copy(update={"id": f"highlight-{index:03d}"})
-        for index, candidate in enumerate(selected, start=1)
-    ]
+    if limit_candidates:
+        return select_highlight_candidates(candidates, settings=settings)
+    spoken = [candidate for candidate in candidates if _is_spoken(candidate)]
+    ranked = sorted(
+        (candidate for candidate in candidates if not _is_spoken(candidate)),
+        key=lambda item: item.score,
+        reverse=True,
+    )
+    budget = max(0, settings.candidate_pool_size - len(spoken))
+    return _number_candidates([*spoken, *ranked[:budget]])
 
 
 def analyse_highlights(
@@ -434,6 +730,8 @@ def analyse_highlights(
     recording_duration_seconds: float,
     recording_offset_seconds: float,
     settings: HighlightConfig,
+    spoken_command_signals: list[Signal] | None = None,
+    limit_candidates: bool = True,
 ) -> list[HighlightCandidate]:
     """Analyze a recording and propose review-only social highlights.
 
@@ -450,6 +748,8 @@ def analyse_highlights(
         recording_duration_seconds: Source duration used for bounds.
         recording_offset_seconds: Explicit log-to-video synchronization offset.
         settings: Highlight extraction and review policy.
+        spoken_command_signals: Exact, locally detected spoken commands. Each
+            command is reserved outside heuristic score, spacing, and count limits.
 
     Returns:
         Ranked, bounded, and unapproved highlight candidates.
@@ -474,6 +774,8 @@ def analyse_highlights(
             "Highlight game/Discord signal roles must not include the microphone"
         )
     signals: list[Signal] = []
+    if spoken_command_signals:
+        signals.extend(spoken_command_signals)
     if settings.keep_discord_audio and discord_stream_index is not None:
         signals.extend(
             audio_energy_signals(
@@ -481,6 +783,7 @@ def analyse_highlights(
                 stream_index=discord_stream_index,
                 threshold_db=settings.discord_rms_threshold_db,
                 kind="discord",
+                relative_energy=settings.relative_audio_energy,
             )
         )
     if settings.keep_game_audio and game_stream_index is not None:
@@ -490,6 +793,17 @@ def analyse_highlights(
                 stream_index=game_stream_index,
                 threshold_db=settings.game_rms_threshold_db,
                 kind="game",
+                relative_energy=settings.relative_audio_energy,
+            )
+        )
+    if settings.keep_microphone_audio and microphone_stream_index is not None:
+        signals.extend(
+            audio_energy_signals(
+                recording,
+                stream_index=microphone_stream_index,
+                threshold_db=settings.microphone_rms_threshold_db,
+                kind="microphone",
+                relative_energy=settings.relative_audio_energy,
             )
         )
     signals.extend(
@@ -515,6 +829,7 @@ def analyse_highlights(
         pulls,
         recording_duration_seconds=recording_duration_seconds,
         settings=settings,
+        limit_candidates=limit_candidates,
     )
 
 

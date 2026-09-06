@@ -93,8 +93,9 @@ def write_edit_summary(
         "## Automation status",
         "",
         "- Deterministic FFmpeg review render: configured",
-        "- DaVinci Resolve external scripting: blocked on this host by the apparent non-Studio "
-        "edition; FCPXML and a Python 3.13 bridge payload are generated",
+        "- DaVinci Resolve handoff: optional; explicit build-timeline or "
+        "create-resolve-project creates the full-size microphone-free source and exports. "
+        "The ordinary FFmpeg workflow does not need them.",
         "- Final rendering: available only through the explicit post-review approval gate",
         "- YouTube upload: available only after final validation, metadata review, and an "
         "explicit upload approval; Private is the default",
@@ -121,6 +122,7 @@ def validate_artifacts(
     microphone_free_probe: MediaProbe | None,
     preview_probe: MediaProbe | None,
     preview_exists: bool,
+    expected_audio_stream_indexes: list[int] | None = None,
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
@@ -149,14 +151,32 @@ def validate_artifacts(
         for clip in timeline.clips
     )
     add("boss_attempts_distinct", boss_distinct, "no boss timeline clip merges multiple attempts")
-    mic_free = microphone_free_probe is not None and len(
-        microphone_free_probe.audio_streams
-    ) == len(timeline.retained_audio_stream_indexes)
+    source_audio_indexes = {stream.index for stream in probe.audio_streams}
+    retained = timeline.retained_audio_stream_indexes
+    mapping_valid = bool(retained) and set(retained).issubset(source_audio_indexes)
+    if expected_audio_stream_indexes is not None:
+        mapping_valid = mapping_valid and retained == expected_audio_stream_indexes
+    add(
+        "retained_audio_mapping_valid",
+        mapping_valid,
+        "timeline retains the configured absolute source audio stream indexes",
+    )
+    microphone = timeline.excluded_microphone_stream_index
+    mic_free = mapping_valid and (
+        microphone is None or (microphone in source_audio_indexes and microphone not in retained)
+    )
     add(
         "microphone_stream_excluded",
         mic_free,
-        "microphone-free sidecar contains only the configured retained stream count",
+        "the FFmpeg timeline excludes the identified microphone stream; this is a "
+        "structural stream-mapping check, not an audible-content review",
     )
+    if microphone_free_probe is not None:
+        add(
+            "resolve_sidecar_retained_audio_count",
+            len(microphone_free_probe.audio_streams) == len(retained),
+            "the optional Resolve sidecar contains only the configured retained stream count",
+        )
     add(
         "preview_rendered",
         preview_exists and preview_probe is not None,

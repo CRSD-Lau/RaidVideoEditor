@@ -1,14 +1,24 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # OBS recording setup
 
 The editor removes a microphone by excluding an entire audio stream. It does not
-perform speech recognition or source separation. A microphone-free game or
-Discord stream must already exist in the recording.
+separate voices from a mixed track. Its local editorial speech analysis and
+optional exact `clip it` recognizer use isolated Discord and microphone stems.
+A microphone-free game or Discord stream must already exist in the recording.
 
-## Audited host configuration
+## Example capture profile
 
-The read-only preflight inspected the active OBS configuration on 2026-08-15.
+The following Pizza Warriors profile was audited on August 30, 2026. It is a
+dated configuration example, not a probe of the reader's current OBS session.
+The Friday shortcut expects this landscape geometry and labelled stems;
+paths, scene names, sources, and bindings must match the actual installation.
+Re-run preflight and make a fresh dual-output smoke recording before raid night.
 
-| Setting | Verified value |
+| Setting | Value at the audit |
 | --- | --- |
 | Active profile | `WoW_Raid_1440p60` |
 | Scene collection | `WoW_Raid_Recording.json` |
@@ -19,14 +29,61 @@ The read-only preflight inspected the active OBS configuration on 2026-08-15.
 | WoW source routing | Tracks 1 and 2 |
 | Discord source routing | Tracks 1 and 3 |
 | Mic/Aux routing | Tracks 1 and 4 |
+| Aitum portrait canvas | 1080x1920 at 60 fps |
+| Aitum portrait recording | `D:\RaidRecordings\Vertical`, Hybrid MP4, NVENC H.264 CQP 18 |
+| Start all recordings | `Ctrl+Shift+F9` |
+| Stop both recordings | `Ctrl+Shift+F10` |
 
 This gives the editor a microphone-free game stem for the full movie and a
 separate Discord stem for reviewed social highlights. Track 1 is still a
 reference mix and must not be used when microphone exclusion is required.
 
-The same check found two operational blockers, not configuration corruption:
-`Full Cam` was active instead of `WoW Raid`, and the combat log had not received
-a fresh event. Switch scenes and run `/combatlog` before recording.
+That historical check found `Full Cam` active instead of `WoW Raid` and no fresh
+combat event. Those observations are not current blockers on another session:
+verify its actual program scene and use `/combatlog` before recording.
+
+## Dual landscape and portrait capture
+
+The landscape recording remains the authoritative editing master. It preserves
+the complete 2560x1440 frame and isolated audio stems needed for the full raid,
+manual reframing, and recovery from a poor portrait composition. The Aitum
+`Vertical Raid Recording` output captures the existing `Vertical` canvas as a
+second 1080x1920 Hybrid MP4. It is a ready-made social source, not a replacement
+for the landscape master.
+
+In the example profile, `Ctrl+Shift+F9` invokes Aitum **Start All Recordings**. That starts
+the built-in landscape recording and `Vertical Raid Recording` together. The
+portrait output uses its own NVENC H.264 CQP 18 encoder and writes tracks 1
+through 4 so the same Full Mix, game, Discord, and microphone choices remain
+available.
+
+When streaming at the same time, do not use Aitum **Stop All Outputs**: that
+control can also stop live streams and virtual cameras. At the end of the raid,
+press `Ctrl+Shift+F10`. The same binding stops the built-in recording and the
+`Vertical Raid Recording` output without targeting Twitch, TikTok, or either
+virtual camera. Confirm that neither recording timer is still moving.
+
+The weekly editor continues to choose the landscape master directly under
+`D:\RaidRecordings`. New weekly configs separately bind a unique timestamp
+match from `Vertical` for native highlight video, resetting any inherited
+companion path and timing hint. Missing or ambiguous pairing leaves that
+binding empty rather than blocking creation of the landscape project.
+
+Native highlight review and export preserve the Aitum composition without blur
+or added title overlays. They retain the verified landscape game, Discord, and
+microphone stems, rather than replacing the audio mapping with the portrait
+file's track numbers. Candidate times stay on the landscape clock. Local
+shared-audio matching across separated samples must establish the offset;
+filename proximity and the preflight duration check are not synchronization
+proof. With a measured positive offset for a later portrait start,
+`portrait_time = landscape_time - offset_seconds`.
+
+`highlights.vertical_offset_hint_seconds` only centers the search. It cannot
+bypass ambiguity, silence, inconsistent offsets, drift, or incomplete candidate
+coverage. Requested native media fails clearly if these checks cannot pass,
+without silently using landscape video. Review and export approval bind the
+exact pair and mapping. Older dated configs retain their saved behavior; the
+default for an omitted `highlights.video_source` remains `landscape`.
 
 ## Required routing
 
@@ -53,7 +110,7 @@ The project can retain Track 2 as `game_track` and leave `discord_track: null`.
 It cannot independently rebalance game and Discord in that layout, but it can
 exclude the microphone.
 
-## Configure OBS 32.1.2
+## Configure OBS 32.2.2
 
 1. Open **Settings > Output**.
 2. Set **Output Mode** to **Advanced**.
@@ -88,9 +145,10 @@ disabling global Desktop Audio when application sources replace it.
 
 ## MOV and HEVC
 
-The current MOV/HEVC recording profile is a supported inspection input for the
-installed FFmpeg/FFprobe. It does not prove that the apparent non-Studio Resolve
-installation will decode or import the generated MOV/HEVC sidecar.
+MOV/HEVC recordings can be inspected when the installed FFmpeg/FFprobe build
+supports their codecs. This is separate from the Hybrid MP4 example above and
+does not establish that a particular Resolve edition can decode or import the
+generated sidecar. Probe the actual file and test the intended editor handoff.
 
 Changing the OBS recording format is not required by the CLI. If recording
 resilience matters, OBS recommends MKV for crash safety and remuxing later. Make
@@ -99,10 +157,10 @@ compatibility can change.
 
 ## Verify the test recording
 
-From `C:\Projects\RaidVideoEditor`:
+From the cloned repository root:
 
 ```powershell
-uv run raid-editor inspect 'C:\Users\YourName\Videos\OBS microphone routing test.mov' --open-review
+uv run --no-sync raid-editor inspect 'C:\Users\YourName\Videos\OBS microphone routing test.mov' --open-review
 ```
 
 The command prints absolute FFprobe stream indexes and generates three short WAV
@@ -147,8 +205,9 @@ highlights:
 Then run the complete Friday preflight against that exact test file:
 
 ```powershell
-uv run raid-editor preflight config\my-raid.local.yaml `
-  --smoke-recording 'D:\RaidRecordings\Friday smoke test.mp4'
+uv run --no-sync raid-editor preflight config\my-raid.local.yaml `
+  --smoke-recording 'D:\RaidRecordings\Friday smoke test.mp4' `
+  --vertical-smoke-recording 'D:\RaidRecordings\Vertical\Friday smoke test.mp4'
 ```
 
 The check fails closed on the expected profile, scene collection, program
@@ -156,6 +215,18 @@ scene, 2560x1440 at 60 fps, recording path, disk reserve, Hybrid MP4/MKV,
 recording-track mask and labels, source routing, required visible sources, and
 fresh combat log. It probes the smoke file for matching geometry and audio
 labels. It never reads `service.json`, stream keys, or OAuth credentials.
+
+The main `preflight` command deliberately validates the authoritative landscape
+file. Also inspect the portrait companion from `D:\RaidRecordings\Vertical` and
+confirm 1080x1920 geometry, 60 fps, audible game/Discord/microphone stems, and
+the intended live crop. Both files must cover the same spoken clap or countdown
+so timing alignment can be checked before the portrait file is used directly.
+The smoke check's similar-duration result is only a capture check. Native
+highlight synchronization must also pass for the actual raid pair. On the next
+intact recording, verify representative native review clips at separated points
+and an approved local export for picture, timing, crop, and landscape audio.
+The September 4 originals were removed after approved cleanup, so they cannot
+serve as a new real-pair validation.
 
 ## Fail-closed behavior
 
@@ -175,13 +246,18 @@ track that contains microphone speech.
 
 - Switch the program scene to `WoW Raid`.
 - Run `/combatlog` and create one fresh combat event.
-- Make a 10–30 second test recording after changing any OBS profile.
+- Press `Ctrl+Shift+F9` and make a 10–30 second dual-output test recording after
+  changing any OBS profile.
+- Press `Ctrl+Shift+F10` to stop both recording rows; never use **Stop All
+  Outputs** while Twitch or TikTok is live.
 - Run `preflight --smoke-recording` and resolve every failed row.
-- Run `inspect` and listen rather than trusting track names.
+- Run `inspect` on both the landscape and portrait files and listen rather than
+  trusting track names.
 - Confirm mic isolation on at least one game/Discord stream.
 - Confirm the OBS filename timestamp and Windows clock are correct.
 - Check free disk space for the source, microphone-free sidecar, review clips,
   and preview.
-- Confirm the saved recording's orientation and dimensions with `inspect`.
+- Confirm 2560x1440 landscape and 1080x1920 portrait dimensions with `inspect`.
 - Start combat logging and, if used, Skada before the raid.
-- Keep the source recording after the raid; the editor never rewrites it.
+- Keep both source recordings until their publication and approved cleanup
+  gates pass; the editor never rewrites either source.

@@ -1,6 +1,14 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # Raid Video Editor decision log
 
-This log describes the landed MVP. Accepted entries are implemented. Entries marked **Deferred** are proposals only and must not be read as current behavior.
+This log records dated design decisions. Later entries and the
+[maintained architecture](architecture.md) supersede phase-specific limits in
+earlier decisions. Accepted entries describe implemented decisions; entries
+marked **Deferred** are proposals and must not be read as current behavior.
 
 ## ADR-0001 — Use a Windows Python 3.12 CLI
 
@@ -17,7 +25,10 @@ Use the `raid_editor` Python 3.12 package with the `raid-editor` Typer entry poi
 
 ### Consequences
 
-The commands are testable and composable from PowerShell. A native GUI is not part of the MVP. The supported command surface is limited to `inspect`, `analyse`, `review`, `build-timeline`, `create-resolve-project`, `render-preview`, `validate`, and `wizard`.
+The commands are testable and composable from PowerShell. A native GUI was not
+part of the original milestone. Its initial command set was `inspect`,
+`analyse`, `review`, `build-timeline`, `create-resolve-project`, `render-preview`,
+`validate`, and `wizard`; the maintained command surface has since expanded.
 
 ## ADR-0002 — Model one recording with one YAML project
 
@@ -389,7 +400,7 @@ Review artifacts would be harder to misuse, but the overlay asset, runtime verif
 ## ADR-0105 — Keep CV and AI advisory if introduced
 
 **Date:** 2026-07-26  
-**Status:** Deferred — not implemented
+**Status:** Accepted — implemented for exact spoken commands and local advisory highlight discovery
 
 ### Context
 
@@ -401,4 +412,97 @@ Allow future models to emit proposals with model/version provenance, confidence,
 
 ### Consequences
 
-Advanced automation could improve efficiency without becoming an unaudited authority. No CV or AI component exists in the MVP.
+Advanced automation can improve efficiency without becoming an unaudited
+authority. The implemented first slice is a local, grammar-constrained Vosk
+adapter for the exact phrase `clip it`. It stores only matched spans and model
+provenance, reserves unapproved review proposals, degrades with explicit
+coverage status, and cannot bypass audio-retention or publication gates.
+The September 6 implementation adds temporary local transcription, strict
+evidence-bound semantic candidates, sparse visual checks, and safe fixed-class
+explanations. It keeps full transcripts and raw model prose out of persisted
+results, exposes incomplete coverage, and permits a complete semantic scan to
+abstain. CV/OCR pull detection and autonomous generative edit decisions remain
+unimplemented. Passing implementation tests does not establish editorial quality.
+
+## ADR-0106 — Repair evidence before adding local editorial intelligence
+
+**Date:** 2026-09-06
+
+**Status:** Implemented and advisory; real-raid preference improvement unverified
+
+### Context
+
+The September 4 review yielded fourteen declined proposals. Boss finishes
+dominated the shortlist and saturated scores obscured ranking differences.
+The player-death detector could mistake empty source GUIDs and NPC/totem deaths
+for player deaths. Fixed context windows also needed an LK payoff correction.
+
+### Decision
+
+Check destination player identity, use a monotonic nonsaturating rank, limit
+routine kills, and avoid unsupported Funny/Clutch heuristic claims. Preserve a
+broad discovery pool and corrected baseline, then scan timed speech across the
+recording with local faster-whisper. Use a local Ollama model for fixed moment
+classes and supported setup/payoff anchors, with bounded sparse visual checks.
+Complete semantic abstention yields no substitute routine-kill suggestions;
+incomplete coverage uses a clearly disclosed corrected fallback. Exact spoken
+clip requests remain protected review anchors.
+
+Install optional runtime/models only through explicit setup. Pin the portable
+runtime hash and speech-model revision, record the resolved editorial-model digest, and
+keep inference on IPv4 loopback. Load GPU libraries from the virtual environment,
+run speech and editorial models sequentially, and report automatic CPU fallback.
+New Friday configurations enable this lane without modifying prior dated
+configuration or approved selections.
+
+The selected default is `qwen3.5:9b`, with the evaluated `Q4_K_M` model digest
+`6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`.
+It replaced the initially evaluated Gemma 4B after targeted negative-control
+and boundary checks. Selection did not relax confidence thresholds or validation
+guards. Qwen requests use `think: false`; two-stage assessment material remains
+transient. These bounded checks do not establish full-raid editorial improvement.
+
+Record explicit keep/maybe/reject feedback separately from export approval.
+Deduplicate repeated imports and omit notes/dialogue. Compare corrected baseline
+and current recommendations in a same-source blinded review that cannot approve
+an export. Preserve zero selected Shorts as a valid result.
+
+### Consequences
+
+The pipeline can search social and narrative context beyond activity peaks while
+keeping model statements provisional and avoiding transcript retention. Setup
+uses additional local disk space, and inference adds runtime/VRAM costs and
+model-dependent uncertainty. Fixed explanations intentionally omit dialogue
+detail. The candidate comparison measures preferences within its pools; random
+outside-pool footage and independent positive examples are still needed for
+recall. September 4 source media was removed after approved cleanup, so a fresh
+full-media improvement comparison requires an intact later raid.
+
+## ADR-0107 — Preserve the recorded portrait composition for weekly highlights
+
+**Date:** 2026-09-06
+
+**Status:** Implemented; real-session picture/timing review remains required
+
+### Decision
+
+Keep the landscape master authoritative for analysis, combat-log alignment,
+candidate times, archive video, and retained audio. New weekly configurations
+bind a separate native Aitum portrait recording for highlight video. Preserve
+the recorded composition without the landscape blur/title treatment.
+
+A unique nearby filename timestamp identifies a possible companion. Shared
+audio at separated points must establish a consistent offset and complete
+window coverage; a configured hint does not establish synchronization. Reject
+ambiguity, drift, or missing coverage without silently changing video sources.
+Bind review and export approval to the verified pair, timing, and audio policy.
+Existing dated configs retain their saved source mode; omitted source fields
+keep the legacy landscape behavior.
+
+### Consequences
+
+The native composition can be reviewed and exported while preserving the known
+landscape audio mapping. Pairing and synchronization become explicit media
+prerequisites. Synthetic synchronization/output checks provide bounded evidence;
+real recordings still need picture, crop, and action/reaction timing review.
+This supports one companion and one offset, not stitching or drift correction.

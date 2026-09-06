@@ -27,6 +27,7 @@ dependencies = [
   "pydantic>=2.11,<3",
   "PyYAML>=6.0.2,<7",
   "typer>=0.27.1,<1",
+  "tzdata>=2026.1,<2027",
 ]
 
 [project.urls]
@@ -35,12 +36,22 @@ Issues = "https://github.com/CRSD-Lau/RaidVideoEditor/issues"
 Repository = "https://github.com/CRSD-Lau/RaidVideoEditor"
 
 [project.optional-dependencies]
+speech = [
+  "vosk==0.3.45",
+]
 dev = [
   "mypy>=2.3.0,<3",
   "pytest>=8.4,<10",
   "pytest-cov>=6.2,<8",
   "ruff>=0.16.2,<1",
   "types-PyYAML>=6.0.12,<7",
+]
+intelligence = [
+    "faster-whisper>=1.2.1,<2",
+]
+intelligence-gpu = [
+    "nvidia-cublas-cu12>=12.9,<13",
+    "nvidia-cudnn-cu12>=9,<10",
 ]
 
 [project.scripts]

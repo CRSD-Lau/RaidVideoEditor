@@ -8,7 +8,13 @@ import subprocess
 from pathlib import Path
 
 from raid_editor.models import PullCandidate
-from raid_editor.util.paths import atomic_write_text, ensure_directory
+from raid_editor.review.media import ReviewMediaFormat, review_encoding_args, review_media_type
+from raid_editor.util.paths import (
+    atomic_write_json,
+    atomic_write_text,
+    ensure_directory,
+    quick_file_fingerprint,
+)
 
 
 class ReviewGenerationError(RuntimeError):
@@ -40,13 +46,41 @@ def generate_pull_media(
     lead_in_seconds: float = 0.0,
     lead_out_seconds: float = 0.0,
     recording_duration_seconds: float | None = None,
+    media_format: ReviewMediaFormat = "webm",
 ) -> dict[str, dict[str, Path]]:
     assets_dir = ensure_directory(destination_dir / "assets")
+    source_fingerprint = quick_file_fingerprint(recording)
+    encoding_args = review_encoding_args(media_format)
     result: dict[str, dict[str, Path]] = {}
     for pull in pulls:
         thumbnail = assets_dir / f"{pull.id}.jpg"
         preview_suffix = "-full" if max_preview_seconds is None else ""
-        preview = assets_dir / f"{pull.id}{preview_suffix}.mp4"
+        preview = assets_dir / f"{pull.id}{preview_suffix}.{media_format}"
+        preview_start = max(0.0, pull.start_seconds - lead_in_seconds)
+        preview_end = pull.end_seconds + lead_out_seconds
+        if recording_duration_seconds is not None:
+            preview_end = min(recording_duration_seconds, preview_end)
+        full_duration = preview_end - preview_start
+        preview_duration = (
+            full_duration
+            if max_preview_seconds is None
+            else min(max_preview_seconds, full_duration)
+        )
+        signature = {
+            "schema_version": 1,
+            "recording": source_fingerprint,
+            "start_seconds": preview_start,
+            "duration_seconds": preview_duration,
+            "audio_stream_indexes": retained_audio_stream_indexes[:1],
+            "media_format": media_format,
+            "encoding_args": encoding_args,
+            "video_filter": "scale=960:-2,fps=30",
+        }
+        manifest_path = preview.with_suffix(preview.suffix + ".json")
+        try:
+            cached_signature = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached_signature = None
         if not thumbnail.is_file():
             _run(
                 [
@@ -68,17 +102,8 @@ def generate_pull_media(
                     str(thumbnail),
                 ]
             )
-        if not preview.is_file():
-            preview_start = max(0.0, pull.start_seconds - lead_in_seconds)
-            preview_end = pull.end_seconds + lead_out_seconds
-            if recording_duration_seconds is not None:
-                preview_end = min(recording_duration_seconds, preview_end)
-            full_duration = preview_end - preview_start
-            preview_duration = (
-                full_duration
-                if max_preview_seconds is None
-                else min(max_preview_seconds, full_duration)
-            )
+        if not preview.is_file() or cached_signature != signature:
+            temporary = preview.with_name(f".{preview.stem}.rendering{preview.suffix}")
             command = [
                 "ffmpeg",
                 "-hide_banner",
@@ -101,23 +126,19 @@ def generate_pull_media(
                 [
                     "-vf",
                     "scale=960:-2,fps=30",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    "28",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    "-movflags",
-                    "+faststart",
+                    *encoding_args,
                     "-y",
-                    str(preview),
+                    str(temporary),
                 ]
             )
-            _run(command)
+            try:
+                _run(command)
+                if not temporary.is_file():
+                    raise ReviewGenerationError(f"FFmpeg did not create review media: {temporary}")
+                temporary.replace(preview)
+                atomic_write_json(manifest_path, signature)
+            finally:
+                temporary.unlink(missing_ok=True)
         result[pull.id] = {"thumbnail": thumbnail, "preview": preview}
     return result
 
@@ -142,6 +163,7 @@ def generate_pull_review_page(
         title = pull.title or pull.encounter or pull.id
         preview_is_full = preview is not None and preview.stem.endswith("-full")
         preview_label = "Full winning take" if preview_is_full else "Review sample"
+        preview_type = review_media_type(preview.suffix.lstrip(".")) if preview else "video/webm"
         difficulty_class = (
             "unknown"
             if pull.difficulty == "UNKNOWN"
@@ -153,7 +175,9 @@ def generate_pull_review_page(
             <article class="pull" id="{html.escape(pull.id)}" data-id="{html.escape(pull.id)}">
               <h2>{html.escape(title)} <span class="difficulty {difficulty_class}">{html.escape(pull.difficulty)}</span></h2>
               <div class="media">
-                <video controls playsinline preload="metadata" poster="{thumbnail_src}" src="{preview_src}"></video>
+                <video controls playsinline preload="metadata" poster="{thumbnail_src}"><source src="{preview_src}" type="{preview_type}"></video>
+                <p><a href="{preview_src}" target="_blank" rel="noopener">Open review clip directly</a></p>
+                <p class="playback-error" hidden role="status">This browser could not play the review clip. Try the direct clip link in another browser.</p>
                 <p class="clip-meta">{preview_label} · {pull.duration_seconds:.1f} second core cut</p>
               </div>
               <details class="fields">
@@ -181,6 +205,8 @@ def generate_pull_review_page(
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="author" content="Neil Mitchell">
+  <meta name="last-modified-by" content="Neil Mitchell">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WoW Raid Pull Review</title>
   <style>
@@ -199,6 +225,8 @@ def generate_pull_review_page(
     .difficulty.unknown {{ background: #715a1f; color: #fff4c7; }}
     .media video {{ display: block; width: 100%; max-height: 78vh; margin-bottom: .4rem; background: #080a0d; }}
     .clip-meta {{ color: #b9c8dc; }}
+    a {{ color: #8ad6ff; }}
+    .playback-error {{ color: #ffd393; }}
     details summary {{ cursor: pointer; padding: .6rem 0; font-weight: 700; }}
     .fields label {{ display: grid; gap: .25rem; margin: .55rem 0; }}
     input, textarea {{ padding: .5rem; background: #0e1218; color: inherit; border: 1px solid #596579; }}
@@ -217,6 +245,12 @@ def generate_pull_review_page(
   {"".join(rows)}
   <script>
     const original = {serialized};
+    document.querySelectorAll("video").forEach(video => {{
+      const showError = () => {{ video.closest(".media").querySelector(".playback-error").hidden = false; }};
+      video.addEventListener("error", showError);
+      video.querySelector("source").addEventListener("error", showError);
+      if (video.error) showError();
+    }});
     document.querySelector("#download").addEventListener("click", () => {{
       const byId = Object.fromEntries(original.map(pull => [pull.id, pull]));
       const pulls = [...document.querySelectorAll(".pull")].map(card => {{

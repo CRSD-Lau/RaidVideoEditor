@@ -1,3 +1,8 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # Resolve computer-use runbook
 
 This runbook constrains any human or computer-use agent operating DaVinci
@@ -39,12 +44,12 @@ Not allowed:
 Resolve these exact paths before launching the UI:
 
 ```text
-CONFIG       C:\Projects\RaidVideoEditor\config\<project>.local.yaml
-FCPXML       C:\Projects\RaidVideoEditor\output\<slug>\timeline\timeline.fcpxml
-SIDECAR      C:\Projects\RaidVideoEditor\output\<slug>\generated-assets\source-microphone-free.mov
-TIMELINE     C:\Projects\RaidVideoEditor\output\<slug>\timeline\timeline.json
-CHAPTERS     C:\Projects\RaidVideoEditor\output\<slug>\reports\chapters.txt
-VALIDATION   C:\Projects\RaidVideoEditor\output\<slug>\reports\validation.md
+CONFIG       <checkout>\config\<project>.local.yaml
+FCPXML       <checkout>\output\<slug>\timeline\timeline.fcpxml
+SIDECAR      <checkout>\output\<slug>\generated-assets\source-microphone-free.mov
+TIMELINE     <checkout>\output\<slug>\timeline\timeline.json
+CHAPTERS     <checkout>\output\<slug>\reports\chapters.txt
+VALIDATION   <checkout>\output\<slug>\reports\validation.md
 ```
 
 Do not infer the slug if command output gives a different directory. Confirm
@@ -69,9 +74,9 @@ If any item is false, stop before controlling Resolve.
 These commands prepare and inspect; they do not prove Resolve compatibility:
 
 ```powershell
-Set-Location C:\Projects\RaidVideoEditor
-uv run raid-editor build-timeline config\<project>.local.yaml
-uv run raid-editor validate config\<project>.local.yaml
+# Run from the cloned repository root.
+uv run --no-sync raid-editor build-timeline config\<project>.local.yaml
+uv run --no-sync raid-editor validate config\<project>.local.yaml
 Get-Item -LiteralPath 'output\<slug>\timeline\timeline.fcpxml'
 Get-Item -LiteralPath 'output\<slug>\generated-assets\source-microphone-free.mov'
 ```
@@ -80,7 +85,7 @@ If considering the API route, run only the bridge dry-run first:
 
 ```powershell
 py -3.13 --version
-uv run raid-editor create-resolve-project config\<project>.local.yaml --dry-run
+uv run --no-sync raid-editor create-resolve-project config\<project>.local.yaml --dry-run
 ```
 
 The dry-run writes build artifacts but does not connect to Resolve. On the
@@ -180,7 +185,8 @@ confirms Resolve Studio and local external scripting:
 7. Record the same evidence as for manual import.
 
 Python 3.13 is a host-specific compatibility boundary for Resolve 20.3.2.
-Python 3.12 remains the application runtime.
+The main application supports Python 3.12 or newer; this separate bridge keeps
+the recorded host-specific interpreter boundary.
 
 ## Cleanup after a failed test
 

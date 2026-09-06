@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import shutil
 import subprocess
@@ -11,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
@@ -36,6 +37,12 @@ YOUTUBE_ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly
 _RETRIABLE_STATUS_CODES = {500, 502, 503, 504}
 _MAX_RETRIES = 8
 _MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024
+_ThumbnailLayout = Literal[
+    "lower_third",
+    "compact_badge",
+    "boss_action",
+    "guild_story",
+]
 
 
 class YouTubeUploadError(RuntimeError):
@@ -53,6 +60,7 @@ class YouTubePackage:
     chapters: Path
     thumbnail: Path
     thumbnail_candidates: tuple[Path, ...]
+    thumbnail_mobile_preview: Path
     studio_details: Path
     manifest: Path
     analytics_plan: Path
@@ -210,12 +218,61 @@ def _create_thumbnail(
     timestamp: float = 1.2,
     headline: str = "",
     subheadline: str = "",
+    layout: _ThumbnailLayout = "lower_third",
 ) -> None:
     filters = [
         "scale=1280:720:force_original_aspect_ratio=decrease",
         "pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black",
     ]
-    if headline:
+    if layout == "compact_badge" and headline:
+        filters.extend(
+            [
+                "drawbox=x=902:y=46:w=330:h=158:color=0x06131F@0.90:t=fill",
+                "drawbox=x=902:y=46:w=330:h=158:color=0x55DFF8@0.95:t=3",
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(headline)}':fontcolor=white:fontsize=42:"
+                "x=902+(330-text_w)/2:y=68",
+            ]
+        )
+        if subheadline:
+            filters.append(
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(subheadline)}':fontcolor=0x55DFF8:fontsize=34:"
+                "x=902+(330-text_w)/2:y=132"
+            )
+    elif layout == "boss_action" and headline:
+        filters.extend(
+            [
+                "drawbox=x=42:y=42:w=560:h=132:color=0x06131F@0.88:t=fill",
+                "drawbox=x=42:y=42:w=8:h=132:color=0x55DFF8@1.0:t=fill",
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(headline)}':fontcolor=white:fontsize=42:"
+                "x=74:y=62",
+            ]
+        )
+        if subheadline:
+            filters.append(
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(subheadline)}':fontcolor=0x55DFF8:fontsize=28:"
+                "x=74:y=120"
+            )
+    elif layout == "guild_story" and headline:
+        filters.extend(
+            [
+                "drawbox=x=46:y=472:w=500:h=178:color=0x06131F@0.88:t=fill",
+                "drawbox=x=46:y=472:w=500:h=178:color=0x55DFF8@0.95:t=3",
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(headline)}':fontcolor=0x55DFF8:fontsize=32:"
+                "x=74:y=500",
+            ]
+        )
+        if subheadline:
+            filters.append(
+                "drawtext=fontfile='C\\:/Windows/Fonts/seguisb.ttf':"
+                f"text='{_escape_drawtext(subheadline)}':fontcolor=white:fontsize=44:"
+                "x=74:y=554"
+            )
+    elif headline:
         filters.extend(
             [
                 "drawbox=x=0:y=500:w=1280:h=220:color=black@0.72:t=fill",
@@ -224,7 +281,7 @@ def _create_thumbnail(
                 "x=(w-text_w)/2:y=530",
             ]
         )
-    if subheadline:
+    if subheadline and layout == "lower_third":
         filters.append(
             "drawtext=fontfile='C\\:/Windows/Fonts/segoeui.ttf':"
             f"text='{_escape_drawtext(subheadline)}':fontcolor=0xF2C45A:fontsize=30:"
@@ -269,10 +326,11 @@ def _create_thumbnail_variants(
     destination: Path,
 ) -> tuple[Path, ...]:
     intro = config.preview.presentation.intro_seconds if config.preview.presentation else 0.0
-    scoreline = scoreline_title_prefix(
-        progress,
-        raid_name=config.project.raid,
-        settings=config.difficulty,
+    raid_label = config.difficulty.title_raid_abbreviation or "ICC"
+    raid_size = f" {progress.raid_size}M" if progress.raid_size is not None else ""
+    clean_headline = f"{raid_label}{raid_size}"
+    clean_scoreline = (
+        f"{progress.bosses_killed}/{progress.expected_bosses} | {progress.heroic_kills}HC"
     )
     first_heroic = next(
         (
@@ -295,38 +353,38 @@ def _create_thumbnail_variants(
         None,
     )
     feature_clip = first_heroic or timeline.clips[0]
-    feature_headline = (
-        f"{feature_clip.label} HEROIC"
-        if first_heroic is not None
-        else f"{feature_clip.label} RAID HIGHLIGHT"
-    )
+    feature_headline = feature_clip.label.upper()[:25]
+    feature_subheadline = "HEROIC BOSS FIGHT" if first_heroic is not None else "RAID HIGHLIGHT"
     final_clip = timeline.clips[-1]
     final_duration = final_clip.source_out - final_clip.source_in
     final_thumbnail_offset = min(
         max(final_duration * 0.75, final_duration - 30.0),
         max(0.2, final_duration - 0.5),
     )
-    variants = (
+    variants: tuple[tuple[float, str, str, _ThumbnailLayout], ...] = (
         (
             max(0.2, min(1.5, intro / 2 if intro else 1.2)),
-            scoreline,
-            "PIZZA WARRIORS",
+            clean_headline,
+            clean_scoreline,
+            "compact_badge",
         ),
         (
             intro
             + feature_clip.timeline_in
             + (feature_clip.source_out - feature_clip.source_in) / 2,
             feature_headline,
-            scoreline,
+            feature_subheadline,
+            "boss_action",
         ),
         (
             intro + final_clip.timeline_in + final_thumbnail_offset,
-            final_clip.label.upper(),
-            scoreline,
+            "PIZZA WARRIORS",
+            final_clip.label.upper()[:25],
+            "guild_story",
         ),
     )
     paths: list[Path] = []
-    for number, (timestamp, headline, subheadline) in enumerate(
+    for number, (timestamp, headline, subheadline, layout) in enumerate(
         variants[: config.youtube.thumbnail_variants], start=1
     ):
         path = destination / f"thumbnail-{number:02d}.jpg"
@@ -336,10 +394,45 @@ def _create_thumbnail_variants(
             timestamp=timestamp,
             headline=headline,
             subheadline=subheadline,
+            layout=layout,
         )
         _validate_thumbnail(path)
         paths.append(path)
     return tuple(paths)
+
+
+def _write_thumbnail_mobile_preview(candidates: tuple[Path, ...], destination: Path) -> None:
+    """Show each candidate at phone-feed sizes without altering source artwork."""
+
+    cards = "".join(
+        "<article>"
+        f"<h2>Variant {index}</h2>"
+        f"<img src='{html.escape(path.as_uri())}' alt='Thumbnail variant {index}'>"
+        "<div class='phone-row'><img class='feed-320' src='"
+        f"{html.escape(path.as_uri())}' alt='320 by 180 mobile preview {index}'>"
+        "<span>320x180 preview<br><small>Mobile feed</small></span></div>"
+        "<div class='phone-row'><img class='feed-160' src='"
+        f"{html.escape(path.as_uri())}' alt='160 by 90 compact preview {index}'>"
+        "<span>160x90 preview<br><small>Compact feed simulation</small></span></div>"
+        "</article>"
+        for index, path in enumerate(candidates, start=1)
+    )
+    page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Mobile thumbnail review</title><style>
+:root{{color-scheme:dark;font-family:Segoe UI,Arial,sans-serif;background:#08131c;color:#eef9ff}}
+body{{max-width:1100px;margin:auto;padding:24px}}main{{display:grid;gap:24px;
+grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}}
+article{{background:#102431;border:1px solid #2a7896;border-radius:16px;padding:16px}}
+article>img{{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:10px}}
+.phone-row{{display:flex;gap:10px;align-items:center;margin-top:18px;font-size:13px}}
+.phone-row img{{object-fit:cover;border-radius:6px;flex:none}}
+.feed-320{{width:320px;height:180px;max-width:62%}}.feed-160{{width:160px;height:90px}}
+small{{color:#9cb8c6}}p{{color:#b9d6e2}}</style></head><body>
+<h1>Mobile thumbnail review</h1>
+<p>Judge legibility, subject clarity, and curiosity at feed size. Variants intentionally test
+different packaging ideas, not near-identical decorations.</p><main>{cards}</main></body></html>"""
+    atomic_write_text(destination, page)
 
 
 def _validate_thumbnail(path: Path) -> None:
@@ -526,15 +619,47 @@ def write_youtube_package(
         root,
     )
     selected = candidates[config.youtube.selected_thumbnail_variant - 1]
+    mobile_preview = root / "thumbnail-mobile-preview.html"
+    _write_thumbnail_mobile_preview(candidates, mobile_preview)
+    concept_names = (
+        ("clean_scoreline", "Instant raid size, progress, and Heroic context"),
+        ("boss_action", "Encounter curiosity from a strong in-fight frame"),
+        ("guild_story", "Pizza Warriors identity and final-boss payoff"),
+    )
+    concepts = [
+        {
+            "variant": index,
+            "file": path.name,
+            "concept": concept_names[index - 1][0],
+            "hypothesis": concept_names[index - 1][1],
+            "provenance": "frame extracted from the validated final master",
+            "sha256": _file_sha256(path),
+        }
+        for index, path in enumerate(candidates, start=1)
+    ]
+    atomic_write_json(root / "thumbnail-concepts.json", concepts)
     shutil.copy2(selected, thumbnail)
     _validate_thumbnail(thumbnail)
     atomic_write_text(
         root / "thumbnail-test-plan.md",
         "# Thumbnail Test Plan\n\n"
-        + "\n".join(
-            f"- Variant {index}: `{path.name}`" for index, path in enumerate(candidates, start=1)
+        + f"- Variant 1: `{candidates[0].name}` - clean scoreline badge; tests instant "
+        + f"context; SHA-256 `{concepts[0]['sha256']}`.\n"
+        + (
+            f"- Variant 2: `{candidates[1].name}` - boss action; tests encounter "
+            f"curiosity; SHA-256 `{concepts[1]['sha256']}`.\n"
+            if len(candidates) > 1
+            else ""
         )
-        + "\n\nUse YouTube Studio Test & Compare only after the public-upload gate.\n",
+        + (
+            f"- Variant 3: `{candidates[2].name}` - guild story; tests Pizza Warriors "
+            f"identity; SHA-256 `{concepts[2]['sha256']}`.\n"
+            if len(candidates) > 2
+            else ""
+        )
+        + "\nReview `thumbnail-mobile-preview.html` before selecting a candidate.\n"
+        + "Run one interpretable YouTube Studio Test & Compare only after the "
+        + "public-upload gate.\n",
     )
     atomic_write_text(
         playlist_plan,
@@ -560,6 +685,7 @@ def write_youtube_package(
         chapters=chapters_path,
         thumbnail=thumbnail,
         thumbnail_candidates=candidates,
+        thumbnail_mobile_preview=mobile_preview,
         studio_details=studio_details,
         manifest=manifest,
         analytics_plan=analytics_plan,

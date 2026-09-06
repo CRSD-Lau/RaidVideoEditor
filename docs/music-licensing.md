@@ -1,3 +1,8 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # Music licensing workflow
 
 The MVP never searches for or downloads music. It will use only a local file
@@ -30,7 +35,7 @@ the page changes.
 From PowerShell:
 
 ```powershell
-(Get-FileHash -LiteralPath 'C:\Projects\RaidVideoEditor\music\files\example.flac' -Algorithm SHA256).Hash.ToLowerInvariant()
+(Get-FileHash -LiteralPath 'music\files\example.flac' -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
 Record that 64-character hash. Re-encoding or editing the file changes the hash
@@ -129,7 +134,7 @@ Music is added only to `render-preview`. It is not embedded in
 Running:
 
 ```powershell
-uv run raid-editor render-preview config\my-raid.local.yaml
+uv run --no-sync raid-editor render-preview config\my-raid.local.yaml
 ```
 
 writes:

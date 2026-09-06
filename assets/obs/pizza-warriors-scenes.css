@@ -1,0 +1,240 @@
+:root {
+  color-scheme: dark;
+  font-family: "Bahnschrift", "Arial Narrow", Arial, sans-serif;
+  --ice: #dff8ff;
+  --cyan: #55ddff;
+  --cyan-soft: #92ecff;
+  --navy: #03111d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.scene {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.countdown-card {
+  position: absolute;
+  display: grid;
+  grid-template-columns: 7px 1fr;
+  overflow: hidden;
+  color: var(--ice);
+  background:
+    linear-gradient(105deg, rgba(2, 14, 25, 0.96), rgba(3, 19, 32, 0.84)),
+    rgba(3, 15, 25, 0.92);
+  border: 1px solid rgba(104, 226, 255, 0.46);
+  box-shadow:
+    0 20px 55px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(9px);
+}
+
+.countdown-card::before {
+  content: "";
+  background: linear-gradient(180deg, #8cecff 0%, #22c5ec 70%, #0d7fa5 100%);
+  box-shadow: 0 0 24px rgba(78, 218, 255, 0.68);
+}
+
+.countdown-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.countdown-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.countdown-kicker,
+.ending-kicker {
+  color: var(--cyan-soft);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.countdown-subtitle,
+.ending-subtitle {
+  color: rgba(223, 248, 255, 0.76);
+  font-weight: 400;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.countdown-value {
+  color: #f2fcff;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 0.85;
+  text-shadow:
+    0 0 20px rgba(81, 219, 255, 0.24),
+    0 2px 8px rgba(0, 0, 0, 0.55);
+}
+
+.landscape .countdown-card {
+  right: 64px;
+  bottom: 58px;
+  width: 610px;
+  height: 178px;
+  border-radius: 11px;
+}
+
+.landscape .countdown-content {
+  gap: 24px;
+  padding: 27px 34px 25px 28px;
+}
+
+.landscape .countdown-kicker {
+  font-size: 22px;
+}
+
+.landscape .countdown-subtitle {
+  margin-top: 10px;
+  font-size: 16px;
+}
+
+.landscape .countdown-value {
+  font-size: 112px;
+}
+
+.vertical .countdown-card {
+  top: 205px;
+  right: 64px;
+  left: 64px;
+  height: 190px;
+  border-radius: 14px;
+}
+
+.vertical .countdown-content {
+  gap: 22px;
+  padding: 30px 34px 28px 30px;
+}
+
+.vertical .countdown-kicker {
+  font-size: 24px;
+}
+
+.vertical .countdown-subtitle {
+  margin-top: 12px;
+  font-size: 18px;
+}
+
+.vertical .countdown-value {
+  font-size: 110px;
+}
+
+.ending {
+  background: transparent;
+}
+
+.ending-mask {
+  position: absolute;
+  inset: auto auto 0 0;
+  display: flex;
+  align-items: flex-end;
+  background: linear-gradient(90deg, #010a12 0%, #020d16 72%, rgba(2, 13, 22, 0) 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 100%);
+}
+
+.ending-copy {
+  position: relative;
+}
+
+.ending-copy::before {
+  content: "";
+  display: block;
+  width: 98px;
+  height: 7px;
+  margin-bottom: 20px;
+  border-radius: 999px;
+  background: var(--cyan);
+  box-shadow: 0 0 20px rgba(73, 219, 255, 0.5);
+}
+
+.ending-title {
+  color: #f0fbff;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+  line-height: 0.92;
+  text-transform: uppercase;
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.5);
+}
+
+.landscape .ending-mask {
+  width: 1400px;
+  height: 500px;
+  background: linear-gradient(90deg, #010a12 0%, #020d16 82%, rgba(2, 13, 22, 0) 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 100%);
+}
+
+.landscape .ending-copy {
+  margin: 0 0 62px 70px;
+}
+
+.landscape .ending-kicker {
+  font-size: 22px;
+}
+
+.landscape .ending-title {
+  margin-top: 8px;
+  font-size: 100px;
+}
+
+.landscape .ending-subtitle {
+  margin-top: 23px;
+  font-size: 22px;
+}
+
+.vertical .ending-mask {
+  width: 100%;
+  height: 690px;
+  background: #010a12;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 100%);
+}
+
+.vertical .ending-copy {
+  margin: 0 64px 122px;
+}
+
+.vertical .ending-copy::before {
+  width: 96px;
+  height: 7px;
+  margin-bottom: 22px;
+}
+
+.vertical .ending-kicker {
+  font-size: 26px;
+}
+
+.vertical .ending-title {
+  max-width: 900px;
+  margin-top: 12px;
+  font-size: 114px;
+  line-height: 0.95;
+}
+
+.vertical .ending-subtitle {
+  margin-top: 30px;
+  font-size: 23px;
+  line-height: 1.35;
+}
