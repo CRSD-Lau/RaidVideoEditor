@@ -461,9 +461,8 @@ def test_new_weekly_config_enables_local_intelligence_without_rewriting_legacy_t
     assert generated.highlights.manual_selection is None
     assert template.read_bytes() == template_bytes
     assert load_project_config(template).highlights.intelligence.enabled is False
-    assert generated.detection.recording_started_at == datetime.fromisoformat(
-        "2026-09-11T22:09:16-03:00"
-    )
+    # OBS filenames use the capture machine's local clock, including on UTC CI hosts.
+    assert generated.detection.recording_started_at == datetime(2026, 9, 11, 22, 9, 16).astimezone()
 
 
 @pytest.mark.parametrize("status", ["unavailable", "partial", "truncated", "failed"])
