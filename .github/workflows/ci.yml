@@ -81,13 +81,15 @@ jobs:
       - name: Test
         run: uv run --no-sync pytest -q --junitxml "$env:RUNNER_TEMP/pytest-results.xml"
 
-      - name: Require the synthetic CLI journey to run
+      - name: Require the synthetic media journeys to run
         run: |
           [xml]$results = Get-Content -LiteralPath "$env:RUNNER_TEMP/pytest-results.xml" -Raw
-          $journey = @($results.SelectNodes('//testcase') | Where-Object { $_.classname -like '*test_synthetic_cli_review_journey*' })
-          if ($journey.Count -eq 0) { throw 'The synthetic CLI journey was not collected' }
-          if (@($journey | Where-Object { $_.SelectSingleNode('skipped') }).Count -gt 0) {
-            throw 'The synthetic CLI journey skipped instead of validating real media'
+          foreach ($module in @('test_synthetic_cli_review_journey', 'test_existing_final_recovery')) {
+            $journey = @($results.SelectNodes('//testcase') | Where-Object { $_.classname -like "*$module*" })
+            if ($journey.Count -eq 0) { throw "The $module journey was not collected" }
+            if (@($journey | Where-Object { $_.SelectSingleNode('skipped') }).Count -gt 0) {
+              throw "The $module journey skipped instead of validating real media"
+            }
           }
 
       - name: Install locked optional CPU inference dependencies

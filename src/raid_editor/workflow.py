@@ -70,6 +70,7 @@ from raid_editor.music.library import (
     write_music_reports,
 )
 from raid_editor.rendering.preview import FinalRenderError, render_final, render_preview
+from raid_editor.rendering.validation import ORIGIN, accepted_final_context
 from raid_editor.reporting.pulls import write_pull_candidates, write_uncertain_segments
 from raid_editor.reporting.summary import (
     validate_artifacts,
@@ -1162,8 +1163,7 @@ def upload_youtube_project(
         )
     if not dry_run and config.youtube.privacy_status == "public" and not public_approved:
         raise YouTubeUploadError("Public publishing requires the additional --public-approved flag")
-    probe, pulls, timeline, _, paths = build_timeline_project(config, resolve_exports=False)
-    _, _, _, _, final = _final_output_settings(config, probe, paths)
+    paths = ProjectPaths.for_config(config)
     validation_path = paths.reports / "final-validation.json"
     if not validation_path.is_file():
         raise YouTubeUploadError("The final validation report is missing")
@@ -1173,10 +1173,28 @@ def upload_youtube_project(
         raise YouTubeUploadError("The final validation report is unreadable") from exc
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         raise YouTubeUploadError("The final master must pass validation before upload")
+    if validation.get("validation_origin") == ORIGIN:
+        context = accepted_final_context(paths.root, validation)
+        if context.timeline.source.resolve() != config.input.recording.resolve():
+            raise YouTubeUploadError("Accepted final belongs to a different project recording")
+        if not context.pulls:
+            raise YouTubeUploadError(
+                "Restore saved analysis/pull-candidates.json and inspect the final again "
+                "before generating YouTube chapters and raid claims"
+            )
+        final, timeline, pulls = context.video, context.timeline, context.pulls
+        config = config.model_copy(
+            update={
+                "preview": config.preview.model_copy(update={"presentation": context.presentation})
+            }
+        )
+    else:
+        probe, pulls, timeline, _, paths = build_timeline_project(config, resolve_exports=False)
+        _, _, _, _, final = _final_output_settings(config, probe, paths)
     recovery = (
-        "Re-render the reviewed final with render-final --approved to generate fresh, "
-        "file-bound validation. If an old master blocks rendering, preserve it at a separate "
-        "path first; preview validation alone cannot approve that file."
+        "Inspect an existing approved master with validate-final CONFIG --video PATH, "
+        "then approve its inspected SHA-256. Conflicting modern bindings cannot be replaced "
+        "by that command; preserve changed media and render the reviewed edit again."
     )
     artifact = validation.get("artifact")
     if not isinstance(artifact, dict):
@@ -1212,6 +1230,10 @@ def upload_youtube_project(
         paths.root / "youtube",
         pulls=pulls,
     )
+    if full_file_sha256(final) != validated_sha256.lower():
+        raise YouTubeUploadError("The final master changed while its YouTube package was prepared")
+    if validation.get("validation_origin") == ORIGIN:
+        accepted_final_context(paths.root, validation)
     if dry_run:
         return package, None, paths
     result = upload_youtube_video(

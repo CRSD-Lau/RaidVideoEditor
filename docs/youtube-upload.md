@@ -41,6 +41,29 @@ requested YouTube upload access, the refresh token is written to
 `secrets\youtube-token.local.json`. No Google password is handled or stored by
 the raid editor.
 
+## Reuse an existing final without rendering it again
+
+An older approved MP4 can receive file-bound validation using `validate-final`:
+
+```powershell
+uv run --no-sync raid-editor validate-final config\my-raid.local.yaml `
+  --video 'output\my-raid\final\my-raid-final-1440p60.mp4'
+```
+
+This fully decodes and hashes the selected file and checks its saved edit records.
+It prints a command containing the inspected hash. After watching and accepting
+the existing master's picture, audio, and edit, run that command with `--approved`
+and `--expected-sha256`. Approval backs up and updates the small evidence files;
+it does not render, modify, move, copy, or upload the MP4.
+
+The raw recording may be absent. The approved render sidecar, saved timeline,
+source probe, and pull records supply the recovery context. YouTube packaging
+then uses those bound records and the original presentation timing, so changed
+intro/outro settings cannot shift the old video's chapters. Missing or conflicting
+evidence is reported explicitly; a conflicting modern hash cannot be overridden.
+See [existing-final recovery](troubleshooting.md#final-validation-is-unbound-or-the-final-master-changed)
+for the evidence paths, limitations, and backup behavior.
+
 ## Review before transmission
 
 Generate the exact package that would be used:

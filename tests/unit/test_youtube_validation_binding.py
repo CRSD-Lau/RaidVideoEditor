@@ -131,7 +131,7 @@ def test_unbound_or_replaced_final_blocks_before_package_creation(
         state.final.unlink()
     state.report.write_text(json.dumps(state.validation), encoding="utf-8")
 
-    with pytest.raises(YouTubeUploadError, match="render-final --approved"):
+    with pytest.raises(YouTubeUploadError, match="validate-final CONFIG --video PATH"):
         workflow.upload_youtube_project(state.config, approved=True, dry_run=dry_run)
 
     state.builder.assert_not_called()

@@ -346,13 +346,40 @@ full SHA-256. An older report containing only `status: passed` cannot validate
 a substituted or newly discovered MP4. The final renderer also refuses to reuse
 an old master whose render manifest lacks a matching artifact binding.
 
-Preserve the old master and its manifest at a separate, explicitly chosen path,
-then render the reviewed final again with
-`uv run --no-sync raid-editor render-final CONFIG --approved`. That generates
-fresh file-bound validation. `validate CONFIG` checks the movie preview and
-does not upgrade an unbound final report. Do not hand-edit hashes or relabel a
-different file to bypass the check. Existing publication evidence should be
-preserved; this error does not authorize another upload or deletion.
+For an existing approved master, inspect the exact MP4 in the project's `final`
+directory without rendering or changing it:
+
+```powershell
+uv run --no-sync raid-editor validate-final config\my-raid.local.yaml `
+  --video 'output\my-raid\final\my-raid-final-1440p60.mp4'
+```
+
+The command reads the complete video, checks it against the saved edit records,
+and prints its SHA-256 plus a ready-to-copy approval command. Watch the complete
+existing master and check picture, sound, and edit, then use that command with
+`--approved --expected-sha256 HASH_FROM_INSPECTION`. A new final render is not
+required. This is fresh approval of the inspected file; it does not prove that
+an unbound legacy file has never changed.
+
+The approved render sidecar, saved `timeline/timeline.json`, and saved
+`analysis/media-probe.json` must be present and consistent. Approval also needs
+`analysis/pull-candidates.json` for downstream chapters and raid claims. The raw
+recording, old preview, music files, and original presentation artwork do not
+need to be available. Source preservation is not reverified, and saved stream
+mapping is distinguished from the operator's audible-content review.
+
+Acceptance preserves exact copies of the old sidecar and validation reports in
+`reports/final-validation-history/`, retains the original render signature, and
+writes the matching artifact bindings. The MP4's bytes and timestamp remain
+unchanged. An ordinary write failure restores the prior reports; after a process
+interruption, inspect again before retrying. Conflicting hashes or unrelated
+changes always block recovery. Do not hand-edit fingerprints.
+
+After acceptance, `upload-youtube CONFIG --dry-run` uses the bound saved timeline,
+pulls, and recorded presentation timing without reading the raw recording.
+Upload and Public visibility still require their separate approvals. Existing
+publication receipts remain intact. `validate CONFIG` continues to check the
+preview; `validate-final` is the separate existing-master workflow.
 
 ## Native portrait review cannot be prepared
 

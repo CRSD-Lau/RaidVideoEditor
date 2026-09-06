@@ -35,6 +35,7 @@ from raid_editor.growth.package import (
 from raid_editor.highlights.feedback import record_editorial_feedback
 from raid_editor.ingestion.probe import probe_media
 from raid_editor.preflight import run_preflight
+from raid_editor.rendering.validation import validate_existing_final
 from raid_editor.resolve.bridge import run_resolve_bridge
 from raid_editor.social.analytics import record_analytics_snapshot
 from raid_editor.social.ledger import (
@@ -847,6 +848,51 @@ def upload_youtube_command(
             if result.thumbnail_error is not None:
                 typer.echo(f"Thumbnail note: {result.thumbnail_error}")
             typer.echo(f"Report: {paths.reports / 'youtube-upload.md'}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("validate-final")
+def validate_final_command(
+    config_path: Path = typer.Argument(..., help="Project YAML with saved edit records."),
+    video: Path = typer.Option(
+        ..., "--video", help="Exact existing MP4 in the project's final directory."
+    ),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm you reviewed this existing final's picture, audio, and edit.",
+    ),
+    expected_sha256: str | None = typer.Option(
+        None, "--expected-sha256", help="Exact SHA-256 printed by the previous inspection."
+    ),
+) -> None:
+    """Inspect and approve an existing final without rerendering or uploading it."""
+    try:
+        config = load_project_config(config_path)
+        paths = ProjectPaths.for_config(config)
+        typer.echo(
+            "Checking the complete existing video and saved edit records; media stays unchanged."
+        )
+        result = validate_existing_final(
+            config, paths.root, video, approved=approved, expected_sha256=expected_sha256
+        )
+        typer.echo(f"Final: {result['artifact']['path']}")
+        typer.echo(f"SHA-256: {result['artifact']['sha256']}")
+        if approved:
+            typer.echo(f"Final validation: PASSED. Report: {paths.reports / 'final-validation.md'}")
+            typer.echo("Upload and public-publishing approval remain separate.")
+        else:
+            typer.echo(f"Inspection passed. Report: {paths.reports / 'final-inspection.json'}")
+            typer.echo(
+                "Watch the complete final and accept its picture, audio, and edit before approving:"
+            )
+            quoted_config = str(config_path.resolve()).replace("'", "''")
+            quoted_video = str(video.resolve()).replace("'", "''")
+            typer.echo(
+                f"uv run --no-sync raid-editor validate-final '{quoted_config}' --video "
+                f"'{quoted_video}' --approved --expected-sha256 {result['artifact']['sha256']}"
+            )
     except (OSError, ValueError, RuntimeError) as exc:
         _error(exc)
 
