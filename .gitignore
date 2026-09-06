@@ -42,6 +42,9 @@ token*.json
 *.aac
 *.mp3
 *.m4a
+*.webm
+*.opus
+*.ogg
 *.drp
 *.dra
 output/*
@@ -50,6 +53,10 @@ samples/generated/*
 !samples/generated/.gitkeep
 music/files/*
 !music/files/.gitkeep
+.models/
+.tools/
+# Generated audits, browser profiles, local snapshots, and review evidence.
+/reports/
 
 # Editor / OS
 .idea/

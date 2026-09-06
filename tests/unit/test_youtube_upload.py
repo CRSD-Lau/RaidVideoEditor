@@ -169,7 +169,10 @@ def test_youtube_package_builds_confirmed_scoreline_chapters_and_three_thumbnail
         for index, boss in enumerate(bosses, start=1)
     ]
 
-    def fake_thumbnail(_video: Path, destination: Path, **_options: object) -> None:
+    thumbnail_options: list[dict[str, object]] = []
+
+    def fake_thumbnail(_video: Path, destination: Path, **options: object) -> None:
+        thumbnail_options.append(options)
         destination.write_bytes(b"jpeg")
 
     monkeypatch.setattr(youtube_upload, "_create_thumbnail", fake_thumbnail)
@@ -199,6 +202,20 @@ def test_youtube_package_builds_confirmed_scoreline_chapters_and_three_thumbnail
     assert "01:05 Lady Deathwhisper (Normal)" in chapters
     assert len(package.thumbnail_candidates) == 3
     assert all(path.read_bytes() == b"jpeg" for path in package.thumbnail_candidates)
+    assert package.thumbnail_mobile_preview.is_file()
+    concepts = json.loads(
+        package.root.joinpath("thumbnail-concepts.json").read_text(encoding="utf-8")
+    )
+    assert [item["concept"] for item in concepts] == [
+        "clean_scoreline",
+        "boss_action",
+        "guild_story",
+    ]
+    assert len({item["hypothesis"] for item in concepts}) == 3
+    assert all(len(item["sha256"]) == 64 for item in concepts)
+    assert thumbnail_options[0]["layout"] == "compact_badge"
+    assert thumbnail_options[0]["headline"] == "ICC 25M"
+    assert thumbnail_options[0]["subheadline"] == "12/12 | 7HC"
 
 
 def test_youtube_upload_refuses_to_authenticate_without_explicit_approval(

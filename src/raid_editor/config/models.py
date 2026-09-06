@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -25,6 +26,7 @@ class ProjectMetadata(StrictModel):
 
 class InputConfig(StrictModel):
     recording: Path
+    vertical_recording: Path | None = None
     combat_log: Path | None = None
     details_export: Path | None = None
     skada_export: Path | None = None
@@ -85,8 +87,121 @@ class DifficultyConfig(StrictModel):
     enabled: bool = True
     raid_size: Literal[10, 25] | None = None
     expected_bosses: int | None = Field(default=None, gt=0, le=100)
+    overall_bosses_killed: int | None = Field(default=None, ge=0, le=100)
     title_raid_abbreviation: str | None = Field(default=None, min_length=1, max_length=20)
     require_confirmed_for_auto_title: bool = True
+
+    @model_validator(mode="after")
+    def overall_result_does_not_exceed_expected(self) -> DifficultyConfig:
+        if (
+            self.overall_bosses_killed is not None
+            and self.expected_bosses is not None
+            and self.overall_bosses_killed > self.expected_bosses
+        ):
+            raise ValueError("overall_bosses_killed cannot exceed expected_bosses")
+        return self
+
+
+def _default_speech_source_roles() -> list[Literal["discord", "microphone"]]:
+    return ["discord", "microphone"]
+
+
+class SpeechTriggerConfig(StrictModel):
+    """Offline spoken-command detection for review-only highlight proposals."""
+
+    enabled: bool = False
+    required: bool = False
+    backend: Literal["vosk"] = "vosk"
+    model_path: Path | None = None
+    phrases: list[str] = Field(default_factory=lambda: ["clip it"], min_length=1, max_length=10)
+    source_roles: list[Literal["discord", "microphone"]] = Field(
+        default_factory=_default_speech_source_roles,
+        min_length=1,
+        max_length=2,
+    )
+    minimum_word_confidence: float = Field(default=0.80, ge=0, le=1)
+    maximum_word_gap_seconds: float = Field(default=0.50, ge=0, le=5)
+    dedupe_seconds: float = Field(default=6.0, ge=0, le=30)
+    maximum_matches: int = Field(default=50, ge=1, le=200)
+    sample_rate_hz: int = Field(default=16_000, ge=8_000, le=48_000)
+
+    @field_validator("phrases")
+    @classmethod
+    def phrases_must_be_unique_words(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for phrase in value:
+            compact = " ".join(phrase.casefold().split())
+            if not compact or not all(
+                character.isalnum() or character == " " for character in compact
+            ):
+                raise ValueError("speech trigger phrases must contain only words and spaces")
+            if compact not in normalized:
+                normalized.append(compact)
+        return normalized
+
+    @field_validator("source_roles")
+    @classmethod
+    def source_roles_must_be_unique(
+        cls, value: list[Literal["discord", "microphone"]]
+    ) -> list[Literal["discord", "microphone"]]:
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def enabled_detection_requires_a_local_model(self) -> SpeechTriggerConfig:
+        if self.enabled and self.model_path is None:
+            raise ValueError("enabled speech trigger detection requires model_path")
+        return self
+
+
+class HighlightIntelligenceConfig(StrictModel):
+    """Local, transcript-free editorial discovery with explicit coverage."""
+
+    enabled: bool = False
+    required: bool = False
+    whisper_model_path: Path | None = None
+    whisper_device: Literal["auto", "cpu", "cuda"] = "auto"
+    whisper_compute_type: str = "int8"
+    language: str = Field(default="en", min_length=2, max_length=12)
+    ollama_url: str = "http://127.0.0.1:11435"
+    ollama_executable: Path | None = None
+    ollama_models_path: Path | None = None
+    model: str = Field(default="qwen3.5:9b", min_length=1, max_length=120)
+    chunk_seconds: float = Field(default=120, ge=30, le=600)
+    overlap_seconds: float = Field(default=20, ge=5, le=120)
+    maximum_chunks: int = Field(default=600, ge=1, le=5000)
+    request_timeout_seconds: float = Field(default=180, ge=5, le=900)
+    minimum_score: float = Field(default=0.65, ge=0, le=1)
+    maximum_candidates: int = Field(default=8, ge=1, le=50)
+    minimum_clip_seconds: float = Field(default=12, ge=5, le=120)
+    maximum_clip_seconds: float = Field(default=90, ge=10, le=180)
+    visual_verification: bool = True
+    maximum_visual_candidates: int = Field(default=12, ge=0, le=50)
+    feedback_path: Path | None = None
+
+    @field_validator("ollama_url")
+    @classmethod
+    def local_endpoint_only(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("highlight intelligence requires a loopback-only HTTP endpoint")
+        _ = parsed.port
+        return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def coherent_windows(self) -> HighlightIntelligenceConfig:
+        if self.overlap_seconds >= self.chunk_seconds:
+            raise ValueError("intelligence overlap_seconds must be shorter than chunk_seconds")
+        if self.minimum_clip_seconds > self.maximum_clip_seconds:
+            raise ValueError("intelligence minimum clip length exceeds maximum")
+        return self
 
 
 class HighlightConfig(StrictModel):
@@ -94,15 +209,22 @@ class HighlightConfig(StrictModel):
 
     enabled: bool = True
     manual_selection: Path | None = None
+    video_source: Literal["landscape", "native_vertical"] = "landscape"
+    vertical_offset_hint_seconds: float | None = Field(default=None, allow_inf_nan=False)
+    vertical_sync_audio_role: Literal["game", "discord", "microphone"] = "game"
     review_clip_seconds: float = Field(default=45.0, gt=5, le=180)
     lead_in_seconds: float = Field(default=25.0, ge=0, le=120)
     lead_out_seconds: float = Field(default=15.0, ge=0, le=120)
     maximum_candidates: int = Field(default=12, ge=1, le=50)
+    candidate_pool_size: int = Field(default=200, ge=12, le=1000)
+    maximum_routine_kills: int = Field(default=2, ge=0, le=50)
     minimum_spacing_seconds: float = Field(default=30.0, ge=0, le=600)
     fusion_window_seconds: float = Field(default=8.0, gt=0, le=60)
     minimum_score: float = Field(default=0.30, ge=0, le=1)
     discord_rms_threshold_db: float = Field(default=-27.0, ge=-100, le=0)
     game_rms_threshold_db: float = Field(default=-20.0, ge=-100, le=0)
+    microphone_rms_threshold_db: float = Field(default=-27.0, ge=-100, le=0)
+    relative_audio_energy: bool = True
     motion_scene_threshold: float = Field(default=0.12, ge=0.001, le=1)
     motion_sample_fps: float = Field(default=2.0, gt=0, le=10)
     motion_keyframes_only: bool = True
@@ -110,6 +232,8 @@ class HighlightConfig(StrictModel):
     keep_game_audio: bool = True
     keep_discord_audio: bool = True
     keep_microphone_audio: bool = False
+    speech_triggers: SpeechTriggerConfig = Field(default_factory=SpeechTriggerConfig)
+    intelligence: HighlightIntelligenceConfig = Field(default_factory=HighlightIntelligenceConfig)
     vertical_resolution: str = "1080x1920"
     hardware_encoding: bool = True
 
@@ -133,6 +257,16 @@ class PreflightConfig(StrictModel):
     expected_scene: str | None = "WoW Raid"
     expected_resolution: str = "2560x1440"
     expected_fps: int = Field(default=60, gt=0, le=120)
+    require_vertical_recording: bool = True
+    aitum_config_file: str = "aitum.json"
+    vertical_canvas_name: str = "Vertical"
+    vertical_recording_output_name: str = "Vertical Raid Recording"
+    vertical_expected_resolution: str = "1080x1920"
+    vertical_recording_subdirectory: str = "Vertical"
+    vertical_video_encoder: str = "obs_nvenc_h264_tex"
+    vertical_rate_control: str = "CQP"
+    vertical_quality: int = Field(default=18, ge=0, le=51)
+    vertical_required_recording_tracks: list[int] = Field(default_factory=lambda: [1, 2, 3, 4])
     minimum_free_space_gib: float = Field(default=150.0, ge=1)
     combat_log_max_age_minutes: float = Field(default=30.0, gt=0)
     require_fresh_combat_log: bool = True
@@ -158,13 +292,30 @@ class PreflightConfig(StrictModel):
         default_factory=lambda: ["WoW", "WebCam", "WebCam Border"]
     )
 
-    @field_validator("expected_resolution")
+    @field_validator("expected_resolution", "vertical_expected_resolution")
     @classmethod
     def expected_resolution_must_be_dimensions(cls, value: str) -> str:
         parts = value.lower().split("x")
         if len(parts) != 2 or not all(part.isdigit() and int(part) > 0 for part in parts):
-            raise ValueError("expected_resolution must use WIDTHxHEIGHT")
+            raise ValueError("expected resolutions must use WIDTHxHEIGHT")
         return value.lower()
+
+    @field_validator("vertical_expected_resolution")
+    @classmethod
+    def vertical_expected_resolution_must_be_portrait(cls, value: str) -> str:
+        width, height = map(int, value.split("x"))
+        if width >= height:
+            raise ValueError("vertical_expected_resolution must be portrait")
+        return value
+
+    @field_validator("vertical_required_recording_tracks")
+    @classmethod
+    def vertical_tracks_must_be_obs_track_numbers(cls, value: list[int]) -> list[int]:
+        if not value or any(track < 1 or track > 6 for track in value):
+            raise ValueError("vertical recording track numbers must be between 1 and 6")
+        if len(value) != len(set(value)):
+            raise ValueError("vertical recording track numbers must be unique")
+        return value
 
     @field_validator("required_recording_tracks")
     @classmethod
@@ -250,6 +401,7 @@ class PreviewConfig(StrictModel):
     bitrate: str = "4M"
     hardware_encoding: bool = False
     review_clip_mode: Literal["sample", "full"] = "sample"
+    review_media_format: Literal["webm", "mp4"] = "webm"
     review_clip_seconds: float = Field(default=10.0, gt=0, le=600)
     watermark: WatermarkConfig | None = None
     presentation: PresentationConfig | None = None

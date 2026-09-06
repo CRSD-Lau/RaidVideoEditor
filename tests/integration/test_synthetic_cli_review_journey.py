@@ -66,21 +66,28 @@ def test_render_preview_dry_run_cli_builds_safe_artifacts_without_changing_sourc
     bridge_payload = project_output / "resolve" / "create-project.json"
 
     assert timeline_path.is_file()
-    assert sidecar.is_file()
+    assert not sidecar.exists()
     assert filter_script.is_file()
-    assert bridge_payload.is_file()
+    assert not bridge_payload.exists()
     assert not preview.exists()
     assert not preview.with_suffix(".manifest.json").exists()
     assert quick_file_fingerprint(SYNTHETIC_RECORDING) == before
 
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
     graph = filter_script.read_text(encoding="utf-8")
-    safety = json.loads(bridge_payload.read_text(encoding="utf-8"))["safety"]
     assert timeline["retained_audio_stream_indexes"] == [2, 3]
     assert timeline["excluded_microphone_stream_index"] == 4
     assert "[0:2]" in graph
     assert "[0:3]" in graph
     assert "[0:4]" not in graph
+
+    # Only an explicit editor-export request materializes the full-size sidecar.
+    resolve_result = runner.invoke(app, ["build-timeline", str(SYNTHETIC_CONFIG)])
+    assert resolve_result.exit_code == 0, resolve_result.output
+    assert sidecar.is_file()
+    assert bridge_payload.is_file()
+    assert quick_file_fingerprint(SYNTHETIC_RECORDING) == before
+    safety = json.loads(bridge_payload.read_text(encoding="utf-8"))["safety"]
     assert len(probe_media(sidecar).audio_streams) == 2
     assert safety == {
         "create_unique_project_only": True,

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import webbrowser
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import NoReturn
 
@@ -19,9 +20,29 @@ from raid_editor.audio.tracks import (
     infer_track_roles,
 )
 from raid_editor.config.loader import PROJECT_ROOT, load_project_config
+from raid_editor.growth.analytics import record_growth_analytics
+from raid_editor.growth.ledger import append_production_time
+from raid_editor.growth.models import ProductionTimeEntry, SourceRange
+from raid_editor.growth.package import (
+    approve_growth_package,
+    prepare_growth_package,
+    record_manual_claim_approval,
+    record_packaging_experiment_state,
+    record_related_target_state,
+    set_recap_decision,
+    write_growth_status,
+)
+from raid_editor.highlights.feedback import record_editorial_feedback
 from raid_editor.ingestion.probe import probe_media
 from raid_editor.preflight import run_preflight
 from raid_editor.resolve.bridge import run_resolve_bridge
+from raid_editor.social.analytics import record_analytics_snapshot
+from raid_editor.social.ledger import (
+    approve_social_review,
+    record_publication_status,
+    write_social_status,
+)
+from raid_editor.social.package import prepare_social_source
 from raid_editor.util.logging import configure_logging
 from raid_editor.util.paths import atomic_write_text, ensure_directory, slugify
 from raid_editor.weekly import (
@@ -35,6 +56,7 @@ from raid_editor.workflow import (
     analyse_project,
     build_timeline_project,
     inspect_project,
+    prepare_highlight_comparison,
     render_final_project,
     render_highlights_project,
     render_preview_project,
@@ -156,7 +178,7 @@ def analyse_highlights_command(
     review_media: bool = typer.Option(True, "--review-media/--no-review-media"),
     open_browser: bool = typer.Option(False, "--open/--no-open"),
 ) -> None:
-    """Rank funny, reaction, movement, clutch, and intense moments for review."""
+    """Discover supported raid moments with explicit local intelligence coverage."""
 
     try:
         config = load_project_config(config_path)
@@ -167,10 +189,46 @@ def analyse_highlights_command(
         page = paths.highlights / "review" / "index.html"
         typer.echo(f"Highlight candidates: {len(candidates)}")
         typer.echo(f"Candidate data: {paths.highlights / 'candidates.json'}")
+        status_path = paths.highlights / "intelligence-status.json"
+        if status_path.is_file():
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            typer.echo(f"Local intelligence coverage: {status.get('status', 'unknown')}")
         if review_media:
             typer.echo(f"Highlight review: {page}")
             if open_browser:
                 _open(page)
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("import-highlight-feedback")
+def import_highlight_feedback_command(
+    selection: Path = typer.Argument(..., help="Reviewed highlight-overrides JSON."),
+    destination: Path = typer.Option(
+        PROJECT_ROOT / "config" / "highlight-feedback.local.json", "--destination"
+    ),
+) -> None:
+    """Record explicit editorial decisions without approving exports or publishing."""
+    try:
+        result = record_editorial_feedback(selection, destination)
+        records = result.get("records", [])
+        typer.echo(f"Editorial feedback saved: {destination}")
+        typer.echo(f"Recorded decisions: {len(records) if isinstance(records, list) else 0}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("compare-highlights")
+def compare_highlights_command(
+    config_path: Path = typer.Argument(..., help="Project YAML with completed highlight analysis."),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Build a blinded same-recording comparison of heuristics and current recommendations."""
+    try:
+        page = prepare_highlight_comparison(load_project_config(config_path))
+        typer.echo(f"Blind highlight comparison: {page}")
+        if open_browser:
+            _open(page)
     except (OSError, ValueError, RuntimeError) as exc:
         _error(exc)
 
@@ -211,12 +269,15 @@ def prepare_weekly_command(
         config = load_project_config(config_path)
         _, pulls, paths = analyse_project(config, create_review_media=True)
         highlights, _ = analyse_highlights_project(config, create_review_media=True)
+        campaign, _, growth_review = prepare_growth_package(config, selected_short_ids=[])
         pull_page = paths.review / "pull-review.html"
         highlight_page = paths.highlights / "review" / "index.html"
         typer.echo(f"Winning-pull candidates: {len(pulls)}")
         typer.echo(f"Highlight candidates: {len(highlights)}")
         typer.echo(f"Pull review: {pull_page}")
         typer.echo(f"Highlight review: {highlight_page}")
+        typer.echo(f"Growth campaign: {campaign.campaign_id}")
+        typer.echo(f"Growth review: {growth_review}")
         if open_browser:
             _open(pull_page)
             _open(highlight_page)
@@ -262,6 +323,7 @@ def friday_command(
 ) -> None:
     """Start the post-raid workflow from the newest verified Friday recording."""
 
+    command_started = time.perf_counter()
     try:
         selected = (
             verify_completed_recording(
@@ -292,17 +354,370 @@ def friday_command(
         config = load_project_config(setup.config_path)
         _, pulls, paths = analyse_project(config, create_review_media=True)
         highlights, _ = analyse_highlights_project(config, create_review_media=True)
+        campaign, _, growth_review = prepare_growth_package(config, selected_short_ids=[])
+        measured_at = datetime.now().astimezone()
+        append_production_time(
+            growth_review.parent.parent / "growth-ledger.jsonl",
+            ProductionTimeEntry(
+                entry_id=(
+                    f"production-time:{campaign.campaign_id}:analysis:{measured_at:%Y%m%dT%H%M%S%f}"
+                ),
+                campaign_id=campaign.campaign_id,
+                recorded_at=measured_at,
+                stage="analysis",
+                unattended_runtime_seconds=time.perf_counter() - command_started,
+                source="measured_command",
+                note="Friday source verification, analysis, and review preparation runtime.",
+            ),
+        )
         pull_page = paths.review / "pull-review.html"
         highlight_page = paths.highlights / "review" / "index.html"
         typer.echo(f"Winning-pull candidates: {len(pulls)}")
         typer.echo(f"Highlight candidates: {len(highlights)}")
         typer.echo(f"Pull review: {pull_page}")
         typer.echo(f"Highlight review: {highlight_page}")
+        typer.echo(f"Growth campaign: {campaign.campaign_id}")
+        typer.echo(f"Growth review: {growth_review}")
         typer.echo("Stopped at the review gates; no final render or upload was performed.")
         if open_browser:
             _open(pull_page)
             _open(highlight_page)
     except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("prepare-growth")
+def prepare_growth_command(
+    config_path: Path = typer.Argument(..., help="Project YAML."),
+    short_ids: list[str] | None = typer.Option(
+        None,
+        "--short-id",
+        help="Approved vertical highlight ID. Repeat zero to two times.",
+    ),
+    no_shorts: bool = typer.Option(
+        False,
+        "--no-shorts",
+        help="Create the accurate archive lane with zero Shorts for this campaign.",
+    ),
+    portrait_source: Path | None = typer.Option(
+        None,
+        "--portrait-source",
+        help="Optional paired native 1080x1920 OBS recording for future portrait edits.",
+    ),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Build the local campaign, calendar, claims, experiments, and cleanup holds."""
+
+    try:
+        if no_shorts and short_ids:
+            raise ValueError("Use --no-shorts or --short-id, not both")
+        config = load_project_config(config_path)
+        campaign, distribution, review = prepare_growth_package(
+            config,
+            selected_short_ids=[] if no_shorts else short_ids,
+            portrait_source=portrait_source,
+        )
+        typer.echo(f"Campaign: {campaign.campaign_id}")
+        typer.echo(f"Content assets: {len(campaign.assets)}")
+        typer.echo(f"Shorts selected: {sum(asset.lane == 'short' for asset in campaign.assets)}/2")
+        typer.echo(f"Distribution entries: {len(distribution.entries)}")
+        typer.echo(f"Calendar entries: {len(distribution.schedule)}")
+        typer.echo(f"Growth review: {review}")
+        typer.echo("Nothing was uploaded, published, scheduled, or changed remotely.")
+        if open_browser:
+            _open(review)
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("approve-growth")
+def approve_growth_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+    approved: bool = typer.Option(False, "--approved"),
+) -> None:
+    """Approve the local package and each Short's related-video target."""
+
+    try:
+        campaign = approve_growth_package(campaign_path, approved=approved)
+        typer.echo(f"Locally approved assets: {len(campaign.assets)}")
+        typer.echo("Nothing was uploaded, published, scheduled, or changed remotely.")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("growth-recap")
+def growth_recap_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+    decision: str = typer.Option(
+        ...,
+        "--decision",
+        help="candidate, hold, or skipped (create and skip remain accepted aliases)",
+    ),
+    reason: str = typer.Option(..., "--reason"),
+    beats: list[str] | None = typer.Option(
+        None,
+        "--beat",
+        help="Candidate recap beat. Repeat for each reviewed beat.",
+    ),
+    source_ranges_json: Path | None = typer.Option(
+        None,
+        "--source-ranges-json",
+        help="JSON array of reviewed recap SourceRange records.",
+    ),
+    audio_plan: str = typer.Option(
+        "not_applicable",
+        "--audio-plan",
+        help="not_applicable, game_only, voice_candidates_require_review, or reviewed_voice",
+    ),
+    estimated_minutes: float | None = typer.Option(
+        None,
+        "--estimated-minutes",
+        min=0.01,
+        max=1440,
+    ),
+    approved: bool = typer.Option(False, "--approved"),
+) -> None:
+    """Record the reviewed recap decision without rendering or publishing it."""
+
+    try:
+        source_ranges: list[SourceRange] = []
+        if source_ranges_json is not None:
+            raw_ranges = json.loads(source_ranges_json.read_text(encoding="utf-8"))
+            if not isinstance(raw_ranges, list):
+                raise ValueError("source-ranges-json must contain one JSON array")
+            source_ranges = [SourceRange.model_validate(item) for item in raw_ranges]
+        campaign = set_recap_decision(
+            campaign_path,
+            decision=decision,
+            reason=reason,
+            approved=approved,
+            candidate_beats=beats,
+            source_ranges=source_ranges,
+            audio_plan=audio_plan,
+            estimated_active_minutes=estimated_minutes,
+        )
+        typer.echo(f"Recap decision: {campaign.recap.decision}")
+        typer.echo("Nothing was rendered, uploaded, or changed remotely.")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("growth-claim")
+def growth_claim_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+    content_id: str = typer.Option(..., "--content-id"),
+    claim_id: str = typer.Option(..., "--claim-id"),
+    kind: str = typer.Option(..., "--kind"),
+    text: str = typer.Option(..., "--text"),
+    reason: str = typer.Option(..., "--reason"),
+    evidence_ids: list[str] | None = typer.Option(
+        None,
+        "--evidence-id",
+        help="Reviewed evidence identity. Repeat at least once.",
+    ),
+    approved: bool = typer.Option(False, "--approved"),
+) -> None:
+    """Record an explicit evidence-backed custom claim approval locally."""
+
+    try:
+        campaign = record_manual_claim_approval(
+            campaign_path,
+            content_id=content_id,
+            claim_id=claim_id,
+            kind=kind,  # type: ignore[arg-type]
+            text=text,
+            reason=reason,
+            evidence_ids=evidence_ids or [],
+            approved=approved,
+        )
+        typer.echo(f"Approved claim {claim_id} in {campaign.campaign_id}")
+        typer.echo("No title, description, upload, or remote state was changed.")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("growth-related-target")
+def growth_related_target_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+    content_id: str = typer.Option(..., "--content-id"),
+    state: str = typer.Option(..., "--state"),
+    reason: str = typer.Option(..., "--reason"),
+    short_remote_id: str | None = typer.Option(None, "--short-remote-id"),
+    short_public_url: str | None = typer.Option(None, "--short-public-url"),
+    target_url: str | None = typer.Option(None, "--target-url"),
+    assignment_receipt: str | None = typer.Option(None, "--assignment-receipt"),
+    approved: bool = typer.Option(False, "--approved"),
+) -> None:
+    """Record a separately reviewed native related-video assignment receipt."""
+
+    try:
+        campaign = record_related_target_state(
+            campaign_path,
+            content_id=content_id,
+            state=state,  # type: ignore[arg-type]
+            reason=reason,
+            approved=approved,
+            short_remote_id=short_remote_id,
+            short_public_url=short_public_url,
+            target_url=target_url,
+            assignment_receipt=assignment_receipt,
+        )
+        short = next(asset for asset in campaign.assets if asset.content_id == content_id)
+        if short.related_target is None:
+            raise ValueError("Short related target unexpectedly disappeared")
+        typer.echo(f"Related target state: {short.related_target.state}")
+        typer.echo("This recorded local evidence only; it did not contact YouTube Studio.")
+    except (OSError, ValueError, RuntimeError, StopIteration) as exc:
+        _error(exc)
+
+
+@app.command("growth-time")
+def growth_time_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+    stage: str = typer.Option(..., "--stage"),
+    content_id: str | None = typer.Option(None, "--content-id"),
+    minutes: float = typer.Option(0, "--minutes", min=0, max=1440),
+    unattended_seconds: float = typer.Option(
+        0,
+        "--unattended-seconds",
+        min=0,
+        max=604800,
+    ),
+    note: str | None = typer.Option(None, "--note"),
+) -> None:
+    """Append one production-effort measurement for pilot economics."""
+
+    try:
+        campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+        campaign_id = str(campaign["campaign_id"])
+        content_lane: str | None = None
+        if content_id is not None:
+            matches = [
+                asset
+                for asset in campaign.get("assets", [])
+                if isinstance(asset, dict) and asset.get("content_id") == content_id
+            ]
+            if len(matches) != 1:
+                raise ValueError("content-id must match exactly one campaign asset")
+            content_lane = str(matches[0]["lane"])
+        now = datetime.now().astimezone()
+        entry = ProductionTimeEntry(
+            entry_id=f"production-time:{campaign_id}:{stage}:{now:%Y%m%dT%H%M%S%f}",
+            campaign_id=campaign_id,
+            recorded_at=now,
+            stage=stage,  # type: ignore[arg-type]
+            content_id=content_id,
+            content_lane=content_lane,  # type: ignore[arg-type]
+            minutes=minutes,
+            unattended_runtime_seconds=unattended_seconds,
+            note=note,
+        )
+        append_production_time(campaign_path.parent / "growth-ledger.jsonl", entry)
+        typer.echo(
+            f"Recorded {entry.minutes:.2f} active minutes and "
+            f"{entry.unattended_runtime_seconds / 60:.2f} unattended minutes "
+            f"for {entry.stage}"
+        )
+    except (OSError, ValueError, RuntimeError, KeyError) as exc:
+        _error(exc)
+
+
+@app.command("growth-experiment")
+def growth_experiment_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+    series_id: str = typer.Option(..., "--series-id"),
+    status: str = typer.Option(..., "--status"),
+    decision: str | None = typer.Option(None, "--decision"),
+    reason: str = typer.Option(..., "--reason"),
+    approved: bool = typer.Option(False, "--approved"),
+) -> None:
+    """Record an observed packaging-test state without controlling YouTube Studio."""
+
+    try:
+        version = record_packaging_experiment_state(
+            campaign_path,
+            series_id=series_id,
+            status=status,
+            decision=decision,
+            reason=reason,
+            approved=approved,
+        )
+        typer.echo(f"Experiment state: {version.status}")
+        typer.echo(f"Experiment version: {version.experiment_id}")
+        typer.echo("This recorded local evidence only; it did not contact YouTube Studio.")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("growth-status")
+def growth_status_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+) -> None:
+    """Report campaign readiness, schedule locks, distribution, and cleanup holds."""
+
+    try:
+        report, destination = write_growth_status(campaign_path)
+        typer.echo(f"Shorts: {report['short_count']}/2")
+        typer.echo(f"Locked schedules: {report['locked_schedule_count']}")
+        typer.echo(f"Cleanup holds: {len(report['cleanup_held'])}")
+        typer.echo(f"Status report: {destination}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("growth-analytics")
+def growth_analytics_command(
+    campaign_path: Path = typer.Argument(..., help="growth/campaign-manifest.json"),
+    content_id: str = typer.Option(..., "--content-id"),
+    destination: str = typer.Option(..., "--destination"),
+    published_at: str = typer.Option(
+        ...,
+        "--published-at",
+        help="Observed publication timestamp with timezone, in ISO-8601 form.",
+    ),
+    checkpoint_hours: int = typer.Option(..., "--checkpoint-hours", min=1),
+    metrics_json: Path = typer.Option(..., "--metrics-json"),
+    source: str = typer.Option("manual_studio_entry", "--source"),
+    surface: str | None = typer.Option(None, "--surface"),
+    metric_definitions_json: Path | None = typer.Option(
+        None,
+        "--metric-definitions-json",
+    ),
+    event_alignment_json: Path | None = typer.Option(None, "--event-alignment-json"),
+) -> None:
+    """Record actual content age, platform surface, metrics, and event alignment."""
+
+    try:
+        published = datetime.fromisoformat(published_at)
+        campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+        campaign_id = str(campaign["campaign_id"])
+        assets = campaign.get("assets", [])
+        matching_assets = [
+            asset
+            for asset in assets
+            if isinstance(asset, dict) and asset.get("content_id") == content_id
+        ]
+        if len(matching_assets) != 1:
+            raise ValueError("content-id must match exactly one campaign asset")
+        snapshot, path = record_growth_analytics(
+            campaign_path.parent / "analytics",
+            campaign_id=campaign_id,
+            content_id=content_id,
+            destination=destination,
+            published_at=published,
+            requested_checkpoint_hours=checkpoint_hours,
+            metrics_path=metrics_json,
+            source=source,
+            content_lane=str(matching_assets[0]["lane"]),
+            cohort=campaign_id,
+            surface=surface,
+            metric_definitions_path=metric_definitions_json,
+            event_alignment_path=event_alignment_json,
+        )
+        typer.echo(f"Actual age: {snapshot.actual_age_seconds / 3600:.2f} hours")
+        typer.echo(f"Outside checkpoint tolerance: {snapshot.outside_tolerance}")
+        typer.echo(f"Analytics snapshot: {path}")
+    except (OSError, ValueError, RuntimeError, KeyError) as exc:
         _error(exc)
 
 
@@ -463,6 +878,11 @@ def preflight(
         "--smoke-recording",
         help="A fresh 10-second OBS test recording to probe.",
     ),
+    vertical_smoke_recording: Path | None = typer.Option(
+        None,
+        "--vertical-smoke-recording",
+        help="The matching Aitum 1080x1920 smoke recording.",
+    ),
     obs_root: Path | None = typer.Option(
         None,
         "--obs-root",
@@ -484,6 +904,7 @@ def preflight(
             destination_markdown=paths.reports / "preflight.md",
             obs_root=obs_root,
             smoke_recording=smoke_recording,
+            vertical_smoke_recording=vertical_smoke_recording,
         )
         typer.echo(f"Preflight: {report.status.upper()}")
         for item in report.checks:
@@ -580,7 +1001,7 @@ def youtube_analytics_command(
 
     try:
         config = load_project_config(config_path)
-        _, _, timeline, _, paths = build_timeline_project(config)
+        _, _, timeline, _, paths = build_timeline_project(config, resolve_exports=False)
         final = next(paths.final_master.glob("*final*.mp4"), None)
         duration = (
             probe_media(final).duration_seconds
@@ -659,6 +1080,178 @@ def archive_command(
         )
         typer.echo(f"Verified archive: {destination}")
         typer.echo("Source files were not deleted.")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("prepare-social")
+def prepare_social_command(
+    source: Path = typer.Argument(
+        ...,
+        help="Project YAML or an explicit owned-assets JSON manifest.",
+    ),
+    facebook_handle: str = typer.Option("Pizza Warriors", "--facebook-handle"),
+    instagram_handle: str = typer.Option("pizzawarriorswow", "--instagram-handle"),
+    tiktok_handle: str = typer.Option("lausudo", "--tiktok-handle"),
+    twitch_handle: str = typer.Option("lausudo", "--twitch-handle"),
+    start_at: str | None = typer.Option(
+        None,
+        "--start-at",
+        help="First release as an ISO-8601 local or timezone-aware timestamp.",
+    ),
+    cadence_days: int = typer.Option(2, "--cadence-days", min=1, max=30),
+    open_review: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Build four reviewed social packages per approved portrait highlight."""
+
+    try:
+        start = datetime.fromisoformat(start_at) if start_at else None
+        handles = {
+            "facebook": facebook_handle,
+            "instagram": instagram_handle,
+            "tiktok": tiktok_handle,
+            "twitch": twitch_handle,
+        }
+        manifest, manifest_path = prepare_social_source(
+            source,
+            handles=handles,
+            start_at=start,
+            cadence_days=cadence_days,
+        )
+        review = manifest_path.parent / "review" / "index.html"
+        typer.echo(f"Social clips: {len(manifest.assets)}")
+        typer.echo(f"Destination packages: {len(manifest.posts)}")
+        typer.echo(f"Distribution manifest: {manifest_path}")
+        typer.echo(f"Review: {review}")
+        typer.echo("Nothing was uploaded or published.")
+        if open_review:
+            _open(review)
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("approve-social")
+def approve_social_command(
+    manifest_path: Path = typer.Argument(..., help="Social distribution-manifest.json."),
+    approved: bool = typer.Option(
+        False,
+        "--approved",
+        help="Confirm all clips, copy, accounts, and release times were reviewed.",
+    ),
+) -> None:
+    """Record the social package review gate without contacting a platform."""
+
+    try:
+        manifest = approve_social_review(manifest_path, approved=approved)
+        typer.echo(f"Approved destination packages: {len(manifest.posts)}")
+        typer.echo("Nothing was uploaded or published.")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("confirm-social-publication")
+def confirm_social_publication_command(
+    manifest_path: Path = typer.Argument(..., help="Social distribution-manifest.json."),
+    platform: str = typer.Option(..., "--platform"),
+    content_id: str = typer.Option(..., "--content-id"),
+    status: str = typer.Option(..., "--status"),
+    remote_content_id: str | None = typer.Option(None, "--remote-id"),
+    public_url: str | None = typer.Option(None, "--url"),
+    target_account_id: str | None = typer.Option(None, "--account-id"),
+    checks_json: Path | None = typer.Option(
+        None,
+        "--checks-json",
+        help="Optional JSON object with playback, crop, audio, audience, and notice checks.",
+    ),
+    error: str | None = typer.Option(None, "--error"),
+    approved: bool = typer.Option(False, "--approved"),
+) -> None:
+    """Record one observed platform state; never perform the remote post itself."""
+
+    allowed_statuses = {
+        "prepared",
+        "reviewed",
+        "awaiting_confirmation",
+        "uploaded",
+        "processing",
+        "scheduled",
+        "published",
+        "verified_public",
+        "failed",
+        "blocked_account",
+        "blocked_capability",
+        "remote_state_uncertain",
+        "waived_by_neil",
+    }
+    try:
+        if status not in allowed_statuses:
+            raise ValueError(f"Unknown social status: {status}")
+        checks = None
+        if checks_json is not None:
+            loaded = json.loads(checks_json.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("checks-json must contain a JSON object")
+            checks = loaded
+        manifest = record_publication_status(
+            manifest_path,
+            platform=platform,
+            content_id=content_id,
+            status=status,  # type: ignore[arg-type]
+            approved=approved,
+            remote_content_id=remote_content_id,
+            public_url=public_url,
+            target_account_id=target_account_id,
+            verification_checks=checks,
+            error=error,
+        )
+        post = next(
+            item
+            for item in manifest.posts
+            if item.platform == platform and item.content_id == content_id
+        )
+        typer.echo(f"Recorded: {post.platform}/{post.content_id} -> {post.status}")
+        typer.echo(f"Idempotency key: {post.idempotency_key}")
+    except (OSError, ValueError, RuntimeError, StopIteration) as exc:
+        _error(exc)
+
+
+@app.command("social-status")
+def social_status_command(
+    manifest_path: Path = typer.Argument(..., help="Social distribution-manifest.json."),
+) -> None:
+    """Write publication counts and social-master cleanup holds."""
+
+    try:
+        report, destination = write_social_status(manifest_path)
+        typer.echo(f"Review approved: {report['review_approved']}")
+        typer.echo(f"Social cleanup eligible: {report['cleanup']['eligible']}")
+        typer.echo(f"Report: {destination}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        _error(exc)
+
+
+@app.command("social-analytics")
+def social_analytics_command(
+    manifest_path: Path = typer.Argument(..., help="Social distribution-manifest.json."),
+    platform: str = typer.Option(..., "--platform"),
+    content_id: str = typer.Option(..., "--content-id"),
+    label: str = typer.Option(..., "--label", help="For example 24h, 7d, or 28d."),
+    metrics_json: Path = typer.Option(..., "--metrics-json"),
+    source: str = typer.Option("manual_studio_entry", "--source"),
+) -> None:
+    """Store one fixed-age platform snapshot and defensible per-view rates."""
+
+    try:
+        snapshot, destination = record_analytics_snapshot(
+            manifest_path,
+            platform=platform,
+            content_id=content_id,
+            label=label,
+            metrics_path=metrics_json,
+            source=source,
+        )
+        typer.echo(f"Analytics snapshot: {destination}")
+        typer.echo(f"Captured: {snapshot.captured_at.isoformat()}")
     except (OSError, ValueError, RuntimeError) as exc:
         _error(exc)
 

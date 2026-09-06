@@ -76,6 +76,8 @@ def test_preflight_accepts_verified_tracks_including_top_level_mic_aux(
     config.input.combat_log.write_text("fresh event\n", encoding="utf-8")
     smoke = tmp_path / "smoke.mp4"
     smoke.write_bytes(b"fresh-smoke")
+    vertical_smoke = tmp_path / "vertical-smoke.mp4"
+    vertical_smoke.write_bytes(b"fresh-vertical-smoke")
     obs.joinpath("user.ini").write_text(
         "[Basic]\nProfileDir=Profile\nSceneCollectionFile=Collection.json\n",
         encoding="utf-8",
@@ -86,7 +88,35 @@ def test_preflight_accepts_verified_tracks_including_top_level_mic_aux(
         f"RecFilePath={recordings}\n"
         "RecFormat2=hybrid_mp4\nRecTracks=15\n"
         "Track1Name=Full Mix\nTrack2Name=WoW Game\n"
-        "Track3Name=Discord\nTrack4Name=Microphone\n",
+        "Track3Name=Discord\nTrack4Name=Microphone\n"
+        "[Hotkeys]\n"
+        'OBSBasic.StopRecording={"bindings":[{"key":"OBS_KEY_F10"}]}\n',
+        encoding="utf-8",
+    )
+    vertical_recordings = recordings / "Vertical"
+    vertical_recordings.mkdir()
+    profile.joinpath("aitum.json").write_text(
+        json.dumps(
+            {
+                "start_all_recordings_hotkey": [{"key": "OBS_KEY_F9"}],
+                "canvas": [{"name": "Vertical", "width": 1080, "height": 1920}],
+                "outputs": [
+                    {
+                        "enabled": True,
+                        "type": "record",
+                        "name": "Vertical Raid Recording",
+                        "path": str(vertical_recordings),
+                        "format": "hybrid_mp4",
+                        "canvas": "Vertical",
+                        "advanced": True,
+                        "video_encoder": "obs_nvenc_h264_tex",
+                        "video_encoder_settings": {"rate_control": "CQP", "cqp": 18},
+                        "audio_tracks": 15,
+                        "stop_hotkey": [{"key": "OBS_KEY_F10"}],
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
     collection = {
@@ -123,27 +153,52 @@ def test_preflight_accepts_verified_tracks_including_top_level_mic_aux(
         return original_read_text(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", guarded_read_text)
-    monkeypatch.setattr(
-        preflight_module,
-        "probe_media",
-        lambda *_args, **_kwargs: SimpleNamespace(
+
+    def fake_probe(path: Path, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        vertical = path.name == "vertical-smoke.mp4"
+        return SimpleNamespace(
             duration_seconds=10.0,
-            video_streams=[SimpleNamespace(width=2560, height=1440, frame_rate=60.0)],
+            video_streams=[
+                SimpleNamespace(
+                    width=1080 if vertical else 2560,
+                    height=1920 if vertical else 1440,
+                    frame_rate=60.0,
+                )
+            ],
             audio_streams=[
                 SimpleNamespace(title="Full Mix"),
                 SimpleNamespace(title="WoW Game"),
                 SimpleNamespace(title="Discord"),
                 SimpleNamespace(title="Microphone"),
             ],
-        ),
-    )
+        )
+
+    monkeypatch.setattr(preflight_module, "probe_media", fake_probe)
     markdown = tmp_path / "preflight.md"
+    missing_vertical = run_preflight(
+        config,
+        destination_json=tmp_path / "preflight-missing-vertical.json",
+        destination_markdown=tmp_path / "preflight-missing-vertical.md",
+        obs_root=obs,
+        smoke_recording=smoke,
+    )
+    assert missing_vertical.status == "failed"
+    assert (
+        next(
+            check.status
+            for check in missing_vertical.checks
+            if check.name == "vertical_smoke_recording"
+        )
+        == "failed"
+    )
+
     report = run_preflight(
         config,
         destination_json=tmp_path / "preflight.json",
         destination_markdown=markdown,
         obs_root=obs,
         smoke_recording=smoke,
+        vertical_smoke_recording=vertical_smoke,
     )
 
     statuses = {check.name: check.status for check in report.checks}
@@ -155,6 +210,17 @@ def test_preflight_accepts_verified_tracks_including_top_level_mic_aux(
     assert statuses["smoke_recording_duration"] == "passed"
     assert statuses["smoke_recording_geometry"] == "passed"
     assert statuses["smoke_recording_audio_tracks"] == "passed"
+    assert statuses["aitum_vertical_canvas"] == "passed"
+    assert statuses["aitum_vertical_recording_output"] == "passed"
+    assert statuses["aitum_vertical_recording_path"] == "passed"
+    assert statuses["aitum_vertical_video_encoder"] == "passed"
+    assert statuses["aitum_vertical_audio_tracks"] == "passed"
+    assert statuses["aitum_start_all_recordings_hotkey"] == "passed"
+    assert statuses["obs_stop_recording_hotkey"] == "passed"
+    assert statuses["aitum_vertical_stop_hotkey"] == "passed"
+    assert statuses["vertical_smoke_recording_geometry"] == "passed"
+    assert statuses["vertical_smoke_recording_audio_tracks"] == "passed"
+    assert statuses["dual_smoke_recording_alignment"] == "passed"
     assert "must-never-be-read" not in markdown.read_text(encoding="utf-8")
 
 

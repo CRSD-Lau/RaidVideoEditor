@@ -1,9 +1,21 @@
-# Raid Video Editor workstation environment report
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
 
-**Status:** Initial audited baseline  
+# Historical workstation environment report
+
+**Status:** Historical initial baseline, July 26, 2026
 **Audit date:** 2026-07-26  
 **Host:** Windows 11 Pro workstation  
 **Scope:** Local development, source inspection, combat-log processing, review rendering, and editor handoff
+
+> This report preserves the original audit and recommendations. Its hardware,
+> disk space, routing problems, interpreter requirements, and implementation
+> status are historical. They must not be read as current workstation state or
+> current installation instructions. Use the [README](../README.md),
+> [OBS guide](obs-recording-setup.md), and [current architecture](architecture.md)
+> for the maintained workflow, and re-probe the environment you intend to use.
 
 ## 1. Executive assessment
 
@@ -53,7 +65,7 @@ NVENC is available for later performance work. The implemented MVP deliberately 
 
 The lack of QSV and failure of AMF AV1 are **not blockers**. The project does not need either capability, and NVENC already covers H.264, HEVC, and AV1.
 
-## 4. Python runtime selection
+## 4. Python runtime selection at the audit date
 
 The workstation has three relevant Python outcomes:
 
@@ -237,7 +249,7 @@ Tool paths and hardware capability results should be machine-level preferences o
 - The 11.03 GiB portrait MOV is processable; its geometry is a creative/configuration concern.
 - Available storage is adequate, especially when large generated data is placed on `D:`.
 
-## 11. Recommended next actions
+## 11. Recommendations recorded at the audit date
 
 1. Create and pin a Python 3.12 virtual environment; make `doctor` fail clearly when launched under another interpreter.
 2. Add a future `doctor` command for exact FFmpeg/FFprobe paths, versions, encoder smoke tests, GPU path, free space, Python version, Resolve edition uncertainty, scripting environment state, and shim isolation.

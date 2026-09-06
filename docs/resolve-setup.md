@@ -1,12 +1,19 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # DaVinci Resolve setup
 
-The reliable handoff from this MVP is a deterministic FCPXML file plus a
-microphone-free media sidecar. Direct Resolve API control is optional and is not
-known to work with the Resolve edition currently installed on this workstation.
+The documented handoff is a deterministic FCPXML file plus a microphone-free
+media sidecar. Direct Resolve API control is optional. Successful live API
+project creation/import has not been established by the repository's recorded
+validation; check the installed edition and compatibility before attempting it.
 
-## Audited host state
+## Historical host evidence
 
-Checked on 2026-07-26:
+Checked on July 26, 2026. These findings describe that workstation at that date,
+not the reader's installation:
 
 | Item | Finding |
 | --- | --- |
@@ -19,16 +26,15 @@ Checked on 2026-07-26:
 | Python 3.11/3.12 shim behavior | Not safe on this host; bridge does not use them |
 | Live API project/import success | **Not demonstrated** |
 
-Treat the installation as apparent non-Studio unless the Resolve UI/license
-proves otherwise. Having SDK files on disk does not prove that the running
-edition exposes external scripting.
+Verify the actual edition in the Resolve UI/license. Having SDK files on disk
+does not prove that the running edition exposes external scripting.
 
 ## Build the handoff
 
 After audio and pull review:
 
 ```powershell
-uv run raid-editor build-timeline config\my-raid.local.yaml
+uv run --no-sync raid-editor build-timeline config\my-raid.local.yaml
 ```
 
 The important artifacts are:
@@ -72,10 +78,10 @@ compatibility claim:
 9. Stop after inspection. Do not add a render job, open Quick Export, sign in to
    YouTube, or upload.
 
-If the HEVC sidecar appears offline or cannot decode, stop. The current OBS
-source is MOV/HEVC and the generated sidecar preserves that codec. Compatibility
-with the apparent non-Studio edition is unproven. Do not silently relink to the
-microphone-containing original.
+If the sidecar appears offline or cannot decode, stop. A stream-copy sidecar
+preserves the actual source codec, so FFmpeg inspection alone does not establish
+Resolve compatibility. The historical real HEVC-sidecar import remains unproven.
+Do not silently relink to the microphone-containing original.
 
 See the guarded [Resolve computer-use
 runbook](resolve-computer-use-runbook.md) before allowing an automation tool to
@@ -83,7 +89,7 @@ operate the UI.
 
 ## Optional API bridge
 
-The main application runs on Python 3.12. The bridge intentionally launches:
+The main application requires Python 3.12 or newer. The bridge separately launches:
 
 ```text
 py -3.13 scripts\resolve_bridge.py <create-project.json>
@@ -93,7 +99,7 @@ Check the planned command first:
 
 ```powershell
 py -3.13 --version
-uv run raid-editor create-resolve-project config\my-raid.local.yaml --dry-run
+uv run --no-sync raid-editor create-resolve-project config\my-raid.local.yaml --dry-run
 ```
 
 `--dry-run` still builds the timeline, sidecar, and bridge payload. It only
@@ -112,11 +118,11 @@ security boundary.
 Only if the edition and settings are confirmed should an operator consider:
 
 ```powershell
-uv run raid-editor create-resolve-project config\my-raid.local.yaml
+uv run --no-sync raid-editor create-resolve-project config\my-raid.local.yaml
 ```
 
-On the currently audited apparent non-Studio installation, expect this to fail
-cleanly. A failure is not permission to alter global environment variables,
+The historical apparent non-Studio installation did not establish API support.
+A failure is not permission to alter global environment variables,
 install unofficial shims, or retry against an existing project.
 
 ## Bridge safety behavior
@@ -149,8 +155,8 @@ collide with the partially created project and will be refused.
   polished grade, titles package, final mix, or delivery preset.
 - Configured preview fades are not a promise of equivalent Resolve transitions.
 - There is no proxy or compatibility-transcode command.
-- There is no final-render, Deliver-page, Quick Export, YouTube, or upload
-  command.
+- The bridge does not operate Deliver, Quick Export, render queues, or YouTube.
+  The CLI's approval-gated FFmpeg final renderer and uploader are separate paths.
 - Synthetic H.264 import succeeded in Resolve 20.3.2. The real HEVC sidecar and
   external API bridge remain unproven.
 

@@ -57,9 +57,10 @@ class PullCandidate(BaseModel):
 
 
 class HighlightCandidate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     id: str
+    review_identity: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     peak_seconds: float = Field(ge=0)
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
@@ -70,6 +71,21 @@ class HighlightCandidate(BaseModel):
     include: bool = False
     title: str
     notes: str = ""
+    origin: Literal["heuristic", "speech", "semantic", "manual"] = "heuristic"
+    rationale: str = Field(default="", max_length=1200)
+    setup_seconds: float | None = Field(default=None, ge=0)
+    payoff_seconds: float | None = Field(default=None, ge=0)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    rejection_reason: Literal[
+        "unset",
+        "ordinary_kill",
+        "nothing_happens",
+        "missing_context",
+        "wrong_timing",
+        "duplicate",
+        "not_my_style",
+    ] = "unset"
+    review_rating: Literal["unreviewed", "keep", "maybe", "reject"] = "unreviewed"
 
     @model_validator(mode="after")
     def valid_window_and_peak(self) -> HighlightCandidate:
@@ -77,6 +93,17 @@ class HighlightCandidate(BaseModel):
             raise ValueError("end_seconds must be greater than start_seconds")
         if not self.start_seconds <= self.peak_seconds <= self.end_seconds:
             raise ValueError("peak_seconds must fall inside the highlight window")
+        for anchor in (self.setup_seconds, self.payoff_seconds):
+            if anchor is not None and not self.start_seconds <= anchor <= self.end_seconds:
+                raise ValueError("setup and payoff must be inside the highlight window")
+        if (
+            self.setup_seconds is not None
+            and self.payoff_seconds is not None
+            and self.setup_seconds > self.payoff_seconds
+        ):
+            raise ValueError("setup must precede payoff")
+        if self.include and self.review_rating == "reject":
+            raise ValueError("a rejected highlight cannot be approved")
         return self
 
 

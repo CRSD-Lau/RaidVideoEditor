@@ -7,6 +7,7 @@ project:
 
 input:
   recording: "../samples/generated/synthetic-raid.mkv"
+  vertical_recording: null # Bind the matching Aitum recording before native highlight review.
   combat_log: "../samples/generated/WoWCombatLog.txt"
   details_export: null
   skada_export: null
@@ -34,21 +35,29 @@ difficulty:
   enabled: true
   raid_size: 25
   expected_bosses: 12
+  overall_bosses_killed: null # optional guild result; never fills a recording/edit gap
   title_raid_abbreviation: "ICC"
   require_confirmed_for_auto_title: true
 
 highlights:
   enabled: true
   manual_selection: null
+  video_source: "native_vertical" # Older configs without this field keep landscape rendering.
+  vertical_offset_hint_seconds: null # Search hint only; shared-audio verification is required.
+  vertical_sync_audio_role: "game"
   review_clip_seconds: 45
   lead_in_seconds: 25
   lead_out_seconds: 15
   maximum_candidates: 12
+  candidate_pool_size: 200
+  maximum_routine_kills: 2
   minimum_spacing_seconds: 30
   fusion_window_seconds: 8
   minimum_score: 0.30
   discord_rms_threshold_db: -27
   game_rms_threshold_db: -20
+  microphone_rms_threshold_db: -27
+  relative_audio_energy: true
   motion_scene_threshold: 0.12
   motion_sample_fps: 2
   motion_keyframes_only: true
@@ -56,6 +65,40 @@ highlights:
   keep_game_audio: true
   keep_discord_audio: true
   keep_microphone_audio: false
+  speech_triggers:
+    enabled: false
+    required: false
+    backend: "vosk"
+    model_path: null
+    phrases: ["clip it"]
+    source_roles: ["discord", "microphone"]
+    minimum_word_confidence: 0.80
+    maximum_word_gap_seconds: 0.50
+    dedupe_seconds: 6
+    maximum_matches: 50
+    sample_rate_hz: 16000
+  intelligence:
+    enabled: false # New Friday configs enable this after local setup.
+    required: false
+    whisper_model_path: "../.models/faster-whisper-medium.en"
+    whisper_device: "auto"
+    whisper_compute_type: "int8"
+    language: "en"
+    ollama_url: "http://127.0.0.1:11435"
+    ollama_executable: "../.tools/ollama-0.33.3/ollama.exe"
+    ollama_models_path: "../.models/ollama"
+    model: "qwen3.5:9b"
+    chunk_seconds: 120
+    overlap_seconds: 20
+    maximum_chunks: 600
+    request_timeout_seconds: 180
+    minimum_score: 0.65
+    maximum_candidates: 8
+    minimum_clip_seconds: 12
+    maximum_clip_seconds: 90
+    visual_verification: true
+    maximum_visual_candidates: 12
+    feedback_path: "highlight-feedback.local.json"
   vertical_resolution: "1080x1920"
   hardware_encoding: true
 
@@ -66,6 +109,16 @@ preflight:
   expected_scene: "WoW Raid"
   expected_resolution: "2560x1440"
   expected_fps: 60
+  require_vertical_recording: true
+  aitum_config_file: "aitum.json"
+  vertical_canvas_name: "Vertical"
+  vertical_recording_output_name: "Vertical Raid Recording"
+  vertical_expected_resolution: "1080x1920"
+  vertical_recording_subdirectory: "Vertical"
+  vertical_video_encoder: "obs_nvenc_h264_tex"
+  vertical_rate_control: "CQP"
+  vertical_quality: 18
+  vertical_required_recording_tracks: [1, 2, 3, 4]
   minimum_free_space_gib: 150
   combat_log_max_age_minutes: 30
   require_fresh_combat_log: true
@@ -101,6 +154,8 @@ preview:
   bitrate: "4M"
   hardware_encoding: true
   review_clip_mode: "full"
+  # Individual boss/highlight browser proxies only. Final movies stay H.264.
+  review_media_format: "webm"
   watermark:
     image: "../assets/pizza-warriors-lausudo-camera-cover-v1.png"
     x_fraction: 0.0

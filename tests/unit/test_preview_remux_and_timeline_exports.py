@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import raid_editor.audio.tracks as audio_tracks
+import raid_editor.rendering.preview as preview_rendering
 from raid_editor.audio.tracks import AudioMappingError, create_mic_free_remux
 from raid_editor.config.models import PresentationConfig, WatermarkConfig
 from raid_editor.ingestion.probe import AudioStream, MediaProbe
@@ -24,7 +25,7 @@ from raid_editor.timeline.export import (
     write_labels_srt,
     write_timeline_json,
 )
-from raid_editor.util.paths import quick_file_fingerprint
+from raid_editor.util.paths import full_file_sha256, quick_file_fingerprint
 
 
 def _timeline(source: Path) -> TimelineDocument:
@@ -349,6 +350,29 @@ def test_icecrown_v2_boss_card_is_compact_and_centers_the_difficulty_badge(
     assert "fontsize=60:x=96:y=118" in graph
 
 
+def test_icecrown_v2_boss_card_keeps_apostrophe_names_filter_safe(tmp_path: Path) -> None:
+    timeline = _timeline(tmp_path / "source.mkv")
+    timeline.clips[1].encounter = "Blood-Queen Lana'thel"
+    timeline.clips[1].label = "Blood-Queen Lana'thel"
+
+    graph = build_filter_graph(
+        timeline,
+        width=1280,
+        height=720,
+        fps=30,
+        transition_seconds=0.2,
+        music=None,
+        presentation=PresentationConfig(
+            theme="icecrown_v2",
+            intro_seconds=0,
+            outro_seconds=0,
+        ),
+    )
+
+    assert "text='BLOOD-QUEEN LANA’THEL'" in graph
+    assert "LANA\\'THEL" not in graph
+
+
 def test_final_command_uses_constant_quality_and_never_uploads(tmp_path: Path) -> None:
     logo = tmp_path / "pizza-warriors.gif"
     logo.write_bytes(b"animated image placeholder")
@@ -370,6 +394,9 @@ def test_final_command_uses_constant_quality_and_never_uploads(tmp_path: Path) -
     assert command[command.index("-rc") + 1] == "constqp"
     assert command[command.index("-qp") + 1] == "18"
     assert command[command.index("-b:a") + 1] == "320k"
+    assert command[command.index("-movflags") + 1] == "+faststart+use_metadata_tags"
+    for field in ("author", "creator", "last_modified_by"):
+        assert f"{field}=Neil Mitchell" in command
     assert "-stream_loop" in command
     assert not any("upload" in argument.casefold() for argument in command)
 
@@ -387,6 +414,61 @@ def test_final_render_requires_explicit_approval(tmp_path: Path) -> None:
             audio_bitrate="320k",
             transition_seconds=0.2,
         )
+
+
+@pytest.mark.parametrize(
+    "change", [None, "bytes", "path", "legacy", "unapproved", "malformed", "missing_manifest"]
+)
+def test_final_cache_reuses_only_the_approved_matching_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str | None
+) -> None:
+    destination = tmp_path / "final.mp4"
+    rendered = []
+
+    def fake_ffmpeg(command, **kwargs):
+        rendered.append(command)
+        Path(command[-1]).write_bytes(b"approved final movie")
+
+    monkeypatch.setattr(preview_rendering.subprocess, "run", fake_ffmpeg)
+    kwargs = {
+        "resolution": "2560x1440",
+        "fps": 60,
+        "codec": "h264",
+        "constant_qp": 18,
+        "preset": "p6",
+        "audio_bitrate": "320k",
+        "transition_seconds": 0.2,
+        "approved": True,
+    }
+    timeline = _timeline(tmp_path / "source.mkv")
+    render_final(timeline, destination, **kwargs)
+    manifest_path = destination.with_suffix(".manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["artifact"] == {
+        "path": str(destination.resolve()),
+        "sha256": full_file_sha256(destination),
+    }
+    if change == "bytes":
+        destination.write_bytes(b"replacement movie of same format")
+    elif change == "path":
+        manifest["artifact"]["path"] = str(tmp_path / "other.mp4")
+    elif change == "legacy":
+        del manifest["artifact"]
+    elif change == "unapproved":
+        manifest["approved"] = False
+    elif change == "malformed":
+        manifest = []
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    if change == "missing_manifest":
+        manifest_path.unlink()
+    before = destination.read_bytes()
+    if change is None:
+        render_final(timeline, destination, **kwargs)
+    else:
+        with pytest.raises(FinalRenderError, match="unverified or different final master"):
+            render_final(timeline, destination, **kwargs)
+    assert len(rendered) == 1
+    assert destination.read_bytes() == before
 
 
 def test_mic_free_remux_maps_retained_streams_and_never_changes_source(

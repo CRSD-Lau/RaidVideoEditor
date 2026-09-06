@@ -130,6 +130,17 @@ def test_create_weekly_config_locks_approved_visual_and_audio_defaults(tmp_path:
     assert config.audio.retained_stream_indexes() == [2]
     assert config.audio.microphone_track == 4
     assert config.highlights.keep_microphone_audio is True
+    assert config.highlights.video_source == "native_vertical"
+    assert config.input.vertical_recording is None
+    assert config.highlights.vertical_offset_hint_seconds is None
+    assert config.highlights.vertical_sync_audio_role == "game"
+    assert config.highlights.speech_triggers.enabled is True
+    assert config.highlights.speech_triggers.required is False
+    assert config.highlights.speech_triggers.phrases == ["clip it"]
+    assert config.highlights.speech_triggers.source_roles == ["discord", "microphone"]
+    assert config.highlights.speech_triggers.model_path == (
+        project_root / ".models" / "vosk-model-small-en-us-0.15"
+    )
     assert config.editing.include_trash_pulls is False
     assert config.editing.include_boss_wipes is False
     assert config.preview.review_clip_mode == "full"
@@ -163,7 +174,9 @@ def test_create_weekly_config_locks_approved_visual_and_audio_defaults(tmp_path:
     assert resolved.outro_subtitle == "ICC 25M 12/12 7HC / AUGUST 21, 2026"
 
 
-def test_create_weekly_config_reuses_same_recording_without_overwrite(tmp_path: Path) -> None:
+def test_create_weekly_config_reuses_same_recording_without_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project_root = tmp_path / "RaidVideoEditor"
     config_dir = project_root / "config"
     assets = project_root / "assets"
@@ -186,7 +199,22 @@ def test_create_weekly_config_reuses_same_recording_without_overwrite(tmp_path: 
         project_root=project_root,
         probe=_probe(recording),
     )
+    payload = yaml.safe_load(first.config_path.read_text(encoding="utf-8"))
+    payload["input"]["vertical_recording"] = str(tmp_path / "reviewed-vertical.mp4")
+    payload["highlights"].update(
+        {
+            "video_source": "landscape",
+            "vertical_offset_hint_seconds": 4.5,
+            "manual_selection": str(tmp_path / "approved-highlight-overrides.json"),
+        }
+    )
+    first.config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     before = first.config_path.read_bytes()
+
+    def unexpected_discovery(*args: object, **kwargs: object) -> None:
+        raise AssertionError("An existing dated configuration must not rediscover its sources")
+
+    monkeypatch.setattr("raid_editor.weekly.discover_portrait_recording", unexpected_discovery)
 
     second = create_weekly_project_config(
         recording,
@@ -198,3 +226,66 @@ def test_create_weekly_config_reuses_same_recording_without_overwrite(tmp_path: 
 
     assert second.created is False
     assert second.config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("discovery", ["paired", "missing", "ambiguous"])
+def test_new_weekly_binds_only_current_companion_and_clears_inherited_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, discovery: str
+) -> None:
+    project_root = tmp_path / "RaidVideoEditor"
+    config_dir = project_root / "config"
+    assets = project_root / "assets"
+    config_dir.mkdir(parents=True)
+    assets.mkdir()
+    (assets / "pizza-warriors-lausudo-camera-cover-v1.png").write_bytes(b"cover")
+    (assets / "pizza-warriors-raid-presentation-v2-clean-1920x1080.png").write_bytes(
+        b"presentation"
+    )
+    old_recording = tmp_path / "2026-08-14 22-13-11.mp4"
+    old_recording.write_bytes(b"old")
+    template = config_dir / "pizza-warriors-2026-08-14.local.yaml"
+    _template(template, old_recording)
+    inherited = yaml.safe_load(template.read_text(encoding="utf-8"))
+    inherited["input"]["vertical_recording"] = str(tmp_path / "old-vertical.mp4")
+    inherited["highlights"] = {
+        "video_source": "landscape",
+        "vertical_offset_hint_seconds": -17.25,
+        "vertical_sync_audio_role": "microphone",
+        "manual_selection": str(tmp_path / "old-approved.json"),
+    }
+    inherited["preflight"] = {"vertical_recording_subdirectory": "Portrait"}
+    template.write_text(yaml.safe_dump(inherited, sort_keys=False), encoding="utf-8")
+    template_before = template.read_bytes()
+    recording = tmp_path / "2026-08-21 22-05-30.mp4"
+    recording.write_bytes(b"new raid")
+    portrait = tmp_path / "Portrait" / "2026-08-21 22-05-32.mp4"
+    portrait.parent.mkdir()
+    portrait.write_bytes(b"new portrait")
+    discovery_calls: list[tuple[Path, str]] = []
+
+    def discover(source: Path, subdirectory: str = "Vertical") -> Path | None:
+        discovery_calls.append((source, subdirectory))
+        if discovery == "ambiguous":
+            raise ValueError("More than one same-session portrait recording")
+        return portrait if discovery == "paired" else None
+
+    monkeypatch.setattr("raid_editor.weekly.discover_portrait_recording", discover)
+    setup = create_weekly_project_config(
+        recording,
+        template_path=template,
+        config_directory=config_dir,
+        project_root=project_root,
+        probe=_probe(recording),
+    )
+    config = load_project_config(setup.config_path)
+
+    assert setup.created
+    assert discovery_calls == [(recording.resolve(), "Portrait")]
+    assert config.input.recording == recording.resolve()
+    assert config.input.vertical_recording == (portrait if discovery == "paired" else None)
+    assert config.highlights.video_source == "native_vertical"
+    assert config.highlights.vertical_offset_hint_seconds is None
+    assert config.highlights.vertical_sync_audio_role == "game"
+    assert config.highlights.manual_selection is None
+    assert config.audio.retained_stream_indexes() == [2]
+    assert template.read_bytes() == template_before

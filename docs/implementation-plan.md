@@ -1,8 +1,9 @@
-# Raid Video Editor implementation plan
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
 
-> Historical planning artifact. The current implementation has advanced beyond
-> several items originally marked deferred. Use [Architecture](architecture.md)
-> and the [root README](../README.md) for current behavior.
+# Raid Video Editor implementation plan
 
 > Historical planning artifact. The current implementation has advanced beyond
 > several items originally marked deferred. Use [Architecture](architecture.md)

@@ -1,7 +1,12 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # Raid Video Editor architecture
 
-**Status:** implemented review-first workflow, reconciled with source and tests on 2026-08-15
-**Runtime:** Windows, CPython 3.12, local command-line workflow  
+**Status:** implemented review-first workflow; highlight architecture updated from source on 2026-09-06
+**Runtime:** Windows, CPython 3.12 or newer compatible with the lockfile, local command-line workflow
 **Entry point:** `raid-editor`
 
 ## 1. Scope
@@ -14,7 +19,11 @@ ICC Normal/Heroic modes, proposes noteworthy social moments, builds a neutral
 timeline, exports FCPXML and a Resolve bridge payload, renders review media, and
 can render and upload an explicitly approved final master.
 
-The implementation is review-first rather than autonomous. It does not understand gameplay or remove speech from a mixed track. Final rendering and YouTube transmission are separate approval-gated stages; uploads default to Private and Public requires an additional approval.
+The implementation is review-first. Optional local speech and vision inference
+can propose evidence-bound highlight context, but does not establish editorial
+quality or approve a clip. It cannot remove speech from a mixed track. Final
+rendering and YouTube transmission remain separate approval-gated stages;
+uploads default to Private and Public requires an additional approval.
 
 ## 2. Implemented workflow
 
@@ -53,21 +62,26 @@ flowchart LR
 The normal operator sequence is:
 
 ```powershell
-uv run raid-editor inspect config\my-raid.local.yaml --open-review
-uv run raid-editor analyse config\my-raid.local.yaml
-uv run raid-editor review config\my-raid.local.yaml
+uv run --no-sync raid-editor inspect config\my-raid.local.yaml --open-review
+uv run --no-sync raid-editor analyse config\my-raid.local.yaml
+uv run --no-sync raid-editor review config\my-raid.local.yaml
 # Save the downloaded pull-overrides.json and reference it from input.manual_pulls.
-uv run raid-editor analyse-highlights config\my-raid.local.yaml --open
-uv run raid-editor build-timeline config\my-raid.local.yaml
-uv run raid-editor render-preview config\my-raid.local.yaml
-uv run raid-editor validate config\my-raid.local.yaml
-uv run raid-editor render-final config\my-raid.local.yaml --approved
-uv run raid-editor upload-youtube config\my-raid.local.yaml --dry-run
+uv run --no-sync raid-editor analyse-highlights config\my-raid.local.yaml --open
+uv run --no-sync raid-editor render-preview config\my-raid.local.yaml
+uv run --no-sync raid-editor validate config\my-raid.local.yaml
+uv run --no-sync raid-editor render-final config\my-raid.local.yaml --approved
+uv run --no-sync raid-editor upload-youtube config\my-raid.local.yaml --dry-run
 # Review the generated YouTube package before the separately approved upload.
-uv run raid-editor upload-youtube config\my-raid.local.yaml --approved
+uv run --no-sync raid-editor upload-youtube config\my-raid.local.yaml --approved
 ```
 
 `wizard` offers a guided route through the same stages. It does not add a stronger approval or persistence mechanism.
+
+The FFmpeg preview, final-render, validation, upload and analytics paths build
+timelines without creating a full-length Resolve source copy. Explicit
+`build-timeline` and `create-resolve-project` requests still create the
+microphone-free MOV and Resolve exports; budget approximately another source
+recording's worth of disk space for that optional handoff.
 
 ## 3. Runtime and command surface
 
@@ -80,7 +94,9 @@ The implemented commands are:
 | `inspect TARGET` | Probe a YAML project or an ad hoc recording; optionally create audio samples and an audio-role page. |
 | `analyse CONFIG` | Detect or load pulls; write JSON, CSV, issues, uncertainty reports, thumbnails, clips, and review HTML. |
 | `review CONFIG` | Rebuild and optionally open the pull-review page. |
-| `analyse-highlights CONFIG` | Fuse motion, game/Discord energy, combat pressure, and boss climaxes into unapproved review candidates. |
+| `analyse-highlights CONFIG` | Discover unapproved moments from corrected gameplay evidence and optional local speech/vision, with explicit coverage and abstention. |
+| `import-highlight-feedback SELECTION` | Store bounded explicit review decisions and an advisory rubric; never treat unchecked clips as rejection. |
+| `compare-highlights CONFIG` | Compare the corrected baseline and current queue against the same verified source, with blinded ratings and no export approval. |
 | `render-highlights CONFIG --approved` | Render only explicitly selected portrait clips with the configured game, Discord, and optional microphone mix. |
 | `prepare-weekly CONFIG` | Prepare both review gates without rendering a final or transmitting anything. |
 | `friday [--recording FILE]` | Find and verify the completed 1440p60 raid, safely create or reuse its dated config, prepare both reviews, and stop at the gates. |
@@ -95,6 +111,15 @@ The implemented commands are:
 | `confirm-youtube-publication CONFIG --approved` | Record operator-confirmed public 1440p playback evidence and hashes. |
 | `sync-playlist CONFIG --approved` | Idempotently create/find the configured playlist and add the approved video. |
 | `youtube-analytics CONFIG` | Write read-only summary and retention reports for the approved video. |
+| `prepare-growth CONFIG` | Build local campaign lineage, claim validation, zero-to-two Short selection, consolidated distribution, locked calendar, experiment, event, and cleanup artifacts. |
+| `approve-growth CAMPAIGN --approved` | Record local campaign and related-target review without a platform mutation. |
+| `growth-recap CAMPAIGN` | Record candidate, hold, or skipped for the optional coherent-story recap lane; candidates include beats, source ranges, audio plan, and effort. |
+| `growth-claim CAMPAIGN` | Record one evidence-backed custom factual claim without bypassing automatic coverage validation. |
+| `growth-related-target CAMPAIGN` | Record the separate native related-video assignment state and observed receipt without contacting YouTube. |
+| `growth-experiment CAMPAIGN` | Append an observed packaging-test state/version without controlling Studio. |
+| `growth-status CAMPAIGN` | Report campaign, distribution, schedule, and cleanup readiness. |
+| `growth-analytics CAMPAIGN` | Capture actual content age, platform surface, metrics, and optional event alignment. |
+| `growth-time CAMPAIGN` | Append a production-effort measurement to the local ledger. |
 | `archive-plan CONFIG` | Enumerate the copy-only archive set without hashing or copying. |
 | `archive CONFIG --approved` | Copy to a separate destination and verify every file with SHA-256; never delete source data. |
 | `wizard [CONFIG]` | Create a local YAML interactively or reopen an existing guided workflow. |
@@ -110,7 +135,9 @@ One YAML file describes one source recording. Relative paths are resolved agains
 The durable configuration sections are:
 
 - `project`: display metadata.
-- `input`: recording, combat log, optional Details placeholder, optional Skada export, and optional manual-pull file.
+- `input`: authoritative landscape recording, optional native vertical companion,
+  combat log, optional Details placeholder, optional Skada export, and optional
+  manual-pull file.
 - `audio`: absolute FFprobe stream indexes and keep/remove choices.
 - `detection`: minimum duration, merge gap, handles, confidence threshold, one combat-log offset, and optional recording start.
 - `editing`: inclusion policies and transition duration.
@@ -118,7 +145,9 @@ The durable configuration sections are:
 - `preview`: resolution, frame rate, bitrate, hardware choice, watermark, static presentation plate, and boss-card theme.
 - `final`: source/explicit geometry and frame rate, codec, quality, preset, hardware choice, and audio bitrate.
 - `difficulty`: supported raid sizes, expected bosses, and title blocking rules.
-- `highlights`: signal thresholds, review context, game/Discord/microphone retention, and portrait output.
+- `highlights`: signal thresholds, review context, local intelligence settings,
+  explicit-feedback path, game/Discord/microphone retention, video source mode,
+  vertical sync role and search hint, and portrait output.
 - `preflight`: expected OBS profile, collection, scene, geometry, track routes, and smoke bounds.
 - `youtube`: separate OAuth paths, visibility, metadata, thumbnail variants, playlist, and analytics behavior.
 - `archive`: copy destination, included artifact classes, and public-1440p gate.
@@ -135,6 +164,7 @@ preview/           review MP4, FFmpeg filter script, render manifest
 final/             explicitly approved master, FFmpeg filter script, validation manifest
 youtube/           metadata, chapters, thumbnails, playlist plan, and upload manifest
 analytics/         read-only summary and retention reports
+growth/            campaign truth, claims, lineage, distribution, calendar, experiments, events, analytics, cleanup dependencies
 archive/           copy-only plan and, outside output, an approved verified copy
 reports/           difficulty, highlights, chapters, audio, edit, and validation reports
 resolve/           create-project.json
@@ -356,15 +386,129 @@ uploader uses a local desktop OAuth token, the
 and a local manifest that prevents re-uploading the same recorded master. It
 applies the generated custom thumbnail when the channel permits it.
 
-`analyse-highlights` scans game and Discord energy independently, samples visual
-motion, counts nearby raid deaths, and adds boss-kill climax signals. Nearby
-signals are fused into ranked funny, reaction, movement, clutch, or intense
-candidates. Every candidate defaults to excluded. Its review media follows an
+`analyse-highlights` scans voice/game energy and visual motion, checks the
+destination identity of player deaths, and adds boss-climax evidence. Empty
+source GUIDs, NPCs and totems do not establish player deaths. A monotonic score
+replaces the old hard cap at 1.0; relative audio thresholds, overlap suppression
+and a routine-kill allowance reduce repetitive proposals. Weak signals receive
+provisional activity categories instead of claiming humor or a successful rescue.
+Exact local `clip it` matches remain reserved outside ordinary candidate limits.
+
+When intelligence is enabled, `discovery-pool.json` preserves the broad
+heuristic pool and `repaired-baseline.json` preserves its source-bound shortlist.
+The separate local speech pass scans overlapping recording windows, including
+downtime, using faster-whisper word timestamps. A loopback Ollama model receives
+compact utterances with ID, role, start/end and text, then selects fixed moment
+classes and existing evidence IDs. Word timestamps remain local and determine
+the earliest/latest supported clip bounds. A second bounded shortlist review
+checks the complete connected setup/payoff and excludes unrelated leading or
+trailing conversation. Invalid/missing boundary refinement or a refiner failure
+marks coverage partial and noncacheable; it is not a successful complete scan.
+Both discovery and refinement remain provisional model judgments. Sparse image
+checks can support, contradict, or leave those moments uncertain. Speech-model
+memory is released before editorial/vision inference. Normal analysis performs
+no model download and stores no full transcript, raw model response, decoded
+inference audio, or inference frames.
+
+The selected local editorial/vision default is `qwen3.5:9b`; requests for Qwen
+disable thinking mode with `think: false`. Discovery and refinement may use
+transient assessment text, but only validated fixed classes, evidence references,
+timing and safe status are persisted. The default choice passed targeted local
+controls with the existing thresholds/guards; it does not establish reliable
+raid-wide recall or human preference improvement.
+
+Persisted explanations use fixed templates, source times, safe diagnostics and
+model provenance. Complete semantic discovery yields its accepted proposals
+plus exact-command reservations, including an empty semantic result. It does
+not pad abstention with routine kills. Incomplete/unavailable analysis combines
+available proposals with the corrected fallback and exposes degraded coverage.
+Only complete/disabled intelligence is reusable as a completed semantic cache.
+Manual selections remain explicit complete-list overrides.
+
+The review records keep/maybe/reject separately from export approval. Feedback
+stores bounded source/candidate decisions without notes or dialogue and does
+not overweight repeated imports. The local prompt uses aggregate and structural
+examples, not arbitrary reviewed titles. `compare-highlights` verifies both
+saved variants against the current recording fingerprint, deduplicates equal
+source windows, and creates a stable blinded review whose downloads always
+retain `include: false`. Such candidate-only evaluation cannot measure recall.
+See [local highlight intelligence](highlight-intelligence.md) for operation and
+the distinction between implementation checks and human preference evidence.
+
+Review media follows an
 explicit audio policy: game and Discord can be retained, and the separately
 mapped microphone can be added with `keep_microphone_audio: true`. The review
 cache fingerprints that policy so changes rebuild the media. `render-highlights`
-requires `--approved` and renders only `include: true` candidates; it has no
-social-media upload implementation.
+requires `--approved` and renders only `include: true` candidates.
+
+The optional native portrait adapter separates the highlight video source from
+the landscape analysis/audio clock. New weekly configs request `native_vertical`
+and discover a unique timestamp companion within ten seconds in the configured
+`Vertical` subdirectory. New projects always clear inherited pairing and offset
+hints; missing/ambiguous discovery leaves an unbound native lane while the
+landscape project remains usable. Existing dated configs are not rewritten.
+The schema default remains `landscape` for backward compatibility.
+
+The adapter measures a constant offset from shared audio in separated samples,
+rejecting weak/ambiguous evidence and disagreement or drift. A configured
+offset hint only centers the search. With portrait starting later by positive
+`offset_seconds`, video seeks use `portrait_time = landscape_time - offset_seconds`;
+audio seeks and candidate bounds remain landscape times. Every full candidate
+must be covered by both inputs. Native review/export preserve the recorded
+portrait composition without the landscape blur/title treatment and mix the
+configured landscape stems. Source fingerprints, the verified mapping, and
+source mode bind review/cache/export approval so a different pair cannot reuse
+approval from earlier footage. Native failures do not trigger a silent
+landscape fallback. This supports one synchronized companion, not stitching or
+piecewise drift repair. Real-session alignment and crop/audio validation remain
+required on the next intact pair; synthetic fixtures are narrower evidence.
+
+`prepare-social` validates each approved portrait export as one H.264 video
+stream plus one AAC audio stream. Canonical masters must be at least 1080x1920.
+An older creator-owned YouTube export can be used only as an explicitly labelled
+owner-recovered derivative at 720x1280 or better, with its quality exception in
+the manifest. The command writes four destination packages per asset, stable
+media and copy hashes, target accounts, a two-day release plan, a local review
+page, platform caption files, and an analytics plan. It makes no network call.
+
+`approve-social` is a local editorial gate. `confirm-social-publication` records
+only a state observed in the official platform interface and appends an
+immutable JSONL receipt. Its idempotency identity binds platform, target handle,
+media hash, and package version. Remote publication remains a deliberate human
+action through Facebook, Instagram, TikTok, or Twitch. Twitch packages use
+Video Producer Uploads, not Twitch Clips.
+
+`social-status` derives per-asset cleanup holds. An approved portrait master is
+eligible for cleanup only when every destination is `verified_public` or has
+been explicitly `waived_by_neil`. `social-analytics` preserves manual Studio
+entries, platform exports, or official API snapshots at fixed content ages and
+calculates likes, comments, shares, saves, and follows per 1,000 views when the
+required metrics exist. Unavailable metrics remain unavailable rather than zero.
+
+`prepare-growth` is the platform-neutral orchestration layer. It separates
+overall raid result from recorded and edited coverage, validates public claims,
+requires one accurate archive, caps new campaigns at zero to two selected
+Shorts, and requires a reviewed related target before a Short is upload-ready.
+It imports accepted social schedules as immutable local locks, adds unapproved
+proposals only in open slots, and maps existing social backfill identities
+through `source_highlight_id` to prevent duplicate publication proposals. The
+consolidated manifest covers YouTube, Facebook, Instagram, TikTok, Twitch, and
+Discord but contains no client capable of changing any of them.
+
+The growth ledger and packaging experiment ledger are append-only JSONL. A
+timeline event map supports event-aligned retention analysis. Growth analytics
+computes actual age from observed timezone-aware publication and capture times,
+records platform surface, and flags snapshots outside checkpoint tolerance.
+Cleanup dependencies are consumed by the guarded weekly cleaner so unfinished
+destinations hold exactly the media they still require.
+
+Speech recognition is optional, local-only, and fail-soft by default. The Vosk
+backend receives a continuous mono 16 kHz PCM stream from FFmpeg with the fixed
+grammar `["clip it", "[unk]"]`. It persists only matched phrase spans, source
+role, confidence, backend/model provenance, and coverage status. It never
+stores the full transcript or changes the game-only full-raid mix. Recognition
+results have their own cache identity so model or runtime changes invalidate
+the expensive pass.
 
 Difficulty classification aggregates boss-specific spell evidence per winning
 pull. Unique evidence yields `10N`, `10H`, `25N`, or `25H`; conflicting or
@@ -388,12 +532,18 @@ The MVP has several small idempotency mechanisms rather than a general stage eng
 - YouTube: full final-master and metadata hashes plus the returned video ID; changed metadata for an already recorded master is blocked rather than duplicated.
 - Review assets: reused when their expected path already exists.
 - Highlight analysis: schema/version and input fingerprints invalidate stale candidates.
+- Social distribution: stable content IDs plus media, copy, and idempotency hashes; all remote states require explicit receipts.
 - Playlist insertion: existing membership is checked before mutation.
 - Archive: an existing destination is a hard refusal; partial copies remain visibly staged.
 
 There is no content-addressed cache, cache-status command, dependency graph, lock file, stale-lock recovery, quarantine, or general resume coordinator.
 
-Source paths are never passed as output destinations by the normal workflow. YAML inputs and source media are not edited. Atomic replacement is implemented for application-written text and JSON. FFmpeg-generated samples, clips, sidecars, and previews use `-y` inside their managed output directories; they do not have the same atomic/collision guarantee.
+Source paths are never passed as output destinations by the normal workflow.
+Existing YAML inputs and source media are not edited. Atomic replacement is
+implemented for application-written text and JSON. Native highlight review
+renders to temporary files and publishes a completed batch after geometry and
+duration checks. Other FFmpeg-generated samples, sidecars, and previews use
+`-y` inside their managed output directories and do not have that same guarantee.
 
 `validate` compares source size and nanosecond modification time with the stored probe. It does not recalculate a full recording hash. Full-file SHA-256 is used for approved music and immediately before an approved YouTube upload.
 
@@ -411,6 +561,7 @@ Source paths are never passed as output destinations by the normal workflow. YAM
 - YouTube upload remains behind a separate approval gate, with an additional Public gate.
 - Classified scorelines contain no unresolved boss difficulty.
 - Highlight rendering enforces the configured microphone-retention policy and includes only reviewed selections.
+- Social packaging validates portrait H.264/AAC media, explicit recovery provenance, unique platform identities, and review approval.
 - Publication confirmation records matching source/metadata hashes and 1440p playback.
 
 These checks are useful but bounded. They do not prove microphone absence within retained mixed audio, byte-for-byte source identity, watermark presence, exact NLE import behavior, or subjective edit quality.
@@ -419,11 +570,20 @@ These checks are useful but bounded. They do not prove microphone absence within
 
 For the same YAML, same files at the same paths, same quick fingerprints, and same Python/FFmpeg behavior, pull ordering, timeline construction, and generated commands are intended to be repeatable. Unit tests cover those decisions.
 
-The MVP does not promise byte-identical media or strict byte-stable JSON/XML across tool, encoder, dependency, operating-system, or implementation changes. External tool versions and executable hashes are not recorded in artifact manifests.
+The MVP does not promise byte-identical media or strict byte-stable JSON/XML
+across tool, encoder, dependency, operating-system, or implementation changes.
+Local semantic inference adds model/runtime dependence even at temperature zero.
+The intelligence lane records dependency/model provenance, and explicit setup
+records the pinned portable-runtime hash and downloaded model identity. This is
+not a repository-wide executable provenance system or a guarantee of identical
+semantic results across hardware.
 
-## 14. Tested baseline
+## 14. Validation coverage and limits
 
-At reconciliation time, the suite contains 109 passing tests. Coverage includes:
+The maintained test suite covers the areas below. Check the
+[CI workflow](../.github/workflows/ci.yml) and the run for the exact revision
+being evaluated; a test count from an older workstation snapshot is not a
+current pass result.
 
 - Strict YAML and audio-role safety.
 - Combat-log parsing, offsets, year rollover, malformed rows, boss/trash separation, and source bounds.
@@ -435,11 +595,34 @@ At reconciliation time, the suite contains 109 passing tests. Coverage includes:
 - Resolve payload safety and isolated Python 3.13 invocation.
 - YouTube credential-path safety, metadata/chapters, upload approval, custom thumbnail application, and duplicate prevention.
 - Heroic/Normal evidence consensus, unknown blocking, and exact scoreline titles.
-- Highlight fusion, Lich King reservation, keyframe motion sampling, approvals, and explicit microphone retention.
+- Correct destination player-death evidence, unsaturated ranking, routine-kill
+  limits, exact-command reservation, full-context boundaries, and audio policy.
+- Semantic coverage, abstention, required/degraded behavior, evidence validation,
+  boundary refinement, local process ownership, and cache invalidation using
+  controlled fixtures and mocked model results.
+- Explicit feedback identity, rerating, source-bound comparison, and separation
+  of editorial preferences from export approval.
+- Native portrait discovery, shared-audio synchronization, coverage failure,
+  source-bound review/export lineage, audio mapping, and temporary-output QA.
 - OBS preflight secret-file refusal, copy-only archives, playlist idempotency, and retention reports.
+- Four-platform social packaging, recovery quality exceptions, publication-state
+  idempotency, cleanup holds, and normalized analytics snapshots.
+- Growth claims, source lineage, calendar locks, related-video dependencies,
+  analytics timing, and operator/machine production-time records.
 - A synthetic `render-preview --dry-run` journey proving expected artifacts and an unchanged quick source fingerprint.
 
-In addition, a real non-dry-run synthetic 1280x720 preview completed successfully through FFmpeg 8, FFprobe read the result, and `validate` passed. A new Resolve 20.3.2 GUI project then imported the synthetic FCPXML and microphone-free sidecar as a 24-second, three-clip timeline. Final Cut import, the external Resolve API bridge, real HEVC-sidecar import, and real-raid editorial quality remain unproven.
+Synthetic media checks exercise actual FFmpeg output separately from mocked
+unit behavior. The native smoke uses authored picture/audio to test positive
+and negative offsets, output geometry, and retained audio without running models.
+Optional local-model smokes use fictional dialogue with fixed fixture identity;
+they require explicitly installed assets and are not a substitute for human
+evaluation of intact raids.
+
+The historical July 26, 2026 manual validation imported a synthetic FCPXML and
+microphone-free sidecar into Resolve 20.3.2 as a 24-second, three-clip timeline.
+That evidence is narrower than general editor compatibility. Final Cut import,
+live external Resolve API creation/import, real HEVC-sidecar import, and
+improved real-raid editorial acceptance remain unproven.
 
 ## 15. Explicitly deferred architecture
 
@@ -448,15 +631,20 @@ The following are **not implemented** and must not be described as current behav
 - Full recording SHA-256 identity, content-addressed stage caching, cache quarantine, and lock/recovery machinery.
 - Integer-microsecond or exact rational timeline types.
 - VFR detection, blocking, or deterministic CFR proxy generation.
-- Multiple synchronization anchors, clock-drift fitting, or piecewise mapping.
+- Multiple combat-log synchronization anchors, clock-drift fitting, or
+  piecewise mapping. Native portrait matching checks separated audio samples
+  for a single consistent offset; it does not correct drift.
 - Hash-bound correction operations, correction replay, or stable byte-offset-derived pull IDs.
 - DTD/`lxml` FCPXML validation and a maintained multi-version NLE compatibility matrix.
 - A persistent `REVIEW — NOT FINAL` watermark or cryptographic approval gate.
-- Multi-recording projects, proxy workflows, or custom Resolve bins.
-- CV/OCR pull detection, speech recognition, source separation, semantic humor
-  understanding, beat-aware editing, or generative edit decisions. Current
-  highlight ranking is deterministic signal fusion only.
-- Automatic visibility changes, remote metadata editing, TikTok/Shorts
-  publishing, a cloud service, or a remote asset downloader.
+- General multi-recording stitching, proxy workflows, or custom Resolve bins.
+  One native portrait companion is supported for the highlight lane.
+- CV/OCR pull detection, source separation, beat-aware movie editing, or
+  autonomous generative edit decisions. Temporary local speech transcription
+  and semantic/visual highlight proposals are implemented; reliable humor
+  understanding or improved human acceptance has not been established.
+- Automatic visibility changes, unattended browser publishing, a cloud service,
+  or a general remote asset downloader. Social publication uses official
+  signed-in platform interfaces and records evidence locally afterward.
 
 These are candidates for later hardening phases. Any CV or AI addition must remain advisory, preserve evidence and model/version provenance, and require human acceptance.

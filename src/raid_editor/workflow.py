@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,14 +32,33 @@ from raid_editor.config.loader import project_output_dir
 from raid_editor.config.models import PresentationConfig, ProjectConfig
 from raid_editor.detection.pipeline import analyse_pulls
 from raid_editor.highlights.detection import (
+    Signal,
     analyse_highlights,
     load_highlight_selection,
+    select_highlight_candidates,
     write_highlight_candidates,
 )
-from raid_editor.highlights.render import render_vertical_highlights
+from raid_editor.highlights.feedback import load_editorial_feedback, record_editorial_feedback
+from raid_editor.highlights.intelligence import (
+    analyse_intelligent_highlights,
+    intelligence_runtime_signature,
+)
+from raid_editor.highlights.local_runtime import managed_local_intelligence
+from raid_editor.highlights.portrait import PortraitSource, resolve_portrait_source
+from raid_editor.highlights.render import (
+    portrait_presentation_reference,
+    render_vertical_highlights,
+)
 from raid_editor.highlights.review import (
+    generate_highlight_comparison_page,
     generate_highlight_review_media,
     generate_highlight_review_page,
+)
+from raid_editor.highlights.speech import (
+    SpeechTriggerResult,
+    detect_spoken_commands,
+    speech_runtime_signature,
+    speech_trigger_result_from_dict,
 )
 from raid_editor.ingestion.probe import MediaProbe, probe_media
 from raid_editor.models import HighlightCandidate, PullCandidate, TimelineDocument
@@ -70,6 +90,7 @@ from raid_editor.util.paths import (
     atomic_write_json,
     atomic_write_text,
     ensure_directory,
+    full_file_sha256,
     quick_file_fingerprint,
 )
 from raid_editor.youtube.upload import (
@@ -83,7 +104,8 @@ from raid_editor.youtube.upload import (
 _PULL_LIST = TypeAdapter(list[PullCandidate])
 _HIGHLIGHT_LIST = TypeAdapter(list[HighlightCandidate])
 _ANALYSIS_SCHEMA_VERSION = 5
-_HIGHLIGHT_SCHEMA_VERSION = 2
+_HIGHLIGHT_SCHEMA_VERSION = 4
+_SPEECH_TRIGGER_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -256,6 +278,7 @@ def analyse_project(
             pulls,
             paths.review,
             config.audio.retained_stream_indexes(),
+            media_format=config.preview.review_media_format,
             max_preview_seconds=(None if full_pull_review else config.preview.review_clip_seconds),
             lead_in_seconds=(config.detection.pre_roll_seconds if full_pull_review else 0.0),
             lead_out_seconds=(config.detection.post_roll_seconds if full_pull_review else 0.0),
@@ -291,12 +314,120 @@ def _highlight_audio_streams(config: ProjectConfig) -> list[int]:
     return indexes
 
 
+def _highlight_source_reference(candidates_path: Path, source: dict[str, object]) -> str:
+    """Keep review identities scoped to one exact recording, including rescans."""
+    fingerprint = hashlib.sha256(json.dumps(source, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"{candidates_path.resolve()}#recording={fingerprint}"
+
+
+def _portrait_source(config: ProjectConfig, paths: ProjectPaths) -> PortraitSource | None:
+    """Keep unavailable native footage local to the highlight media lane."""
+    try:
+        source = resolve_portrait_source(config, paths.highlights)
+    except (ValueError, OSError, RuntimeError) as exc:
+        atomic_write_json(
+            paths.highlights / "portrait-source-status.json",
+            {
+                "status": "blocked",
+                "detail": str(exc),
+                "author": "Neil Mitchell",
+                "last_modified_by": "Neil Mitchell",
+            },
+        )
+        raise
+    atomic_write_json(
+        paths.highlights / "portrait-source-status.json",
+        {
+            "status": "verified" if source else "landscape_mode",
+            "author": "Neil Mitchell",
+            "last_modified_by": "Neil Mitchell",
+        },
+    )
+    return source
+
+
+def _selection_presentation_reference(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    value = payload.get("presentation_reference") if isinstance(payload, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _presentation_reference(config: ProjectConfig, source: PortraitSource | None) -> str | None:
+    return (
+        portrait_presentation_reference(
+            source,
+            audio_stream_indexes=_highlight_audio_streams(config),
+            resolution=config.highlights.vertical_resolution,
+        )
+        if source
+        else None
+    )
+
+
+def _review_source_reference(
+    path: Path,
+    source: dict[str, object],
+    presentation: str | None,
+) -> str:
+    reference = _highlight_source_reference(path, source)
+    return f"{reference}&presentation={presentation}" if presentation else reference
+
+
 def analyse_highlights_project(
     config: ProjectConfig,
     *,
     create_review_media: bool = True,
 ) -> tuple[list[HighlightCandidate], ProjectPaths]:
+    if not config.highlights.enabled or config.highlights.manual_selection is not None:
+        return _analyse_highlights_project(config, create_review_media=create_review_media)
+    with managed_local_intelligence(config.highlights.intelligence):
+        return _analyse_highlights_project(config, create_review_media=create_review_media)
+
+
+def _analyse_highlights_project(
+    config: ProjectConfig,
+    *,
+    create_review_media: bool = True,
+) -> tuple[list[HighlightCandidate], ProjectPaths]:
     probe, pulls, paths = analyse_project(config, create_review_media=False)
+    if not config.highlights.enabled:
+        disabled_status: dict[str, object] = {
+            "schema_version": 1,
+            "author": "Neil Mitchell",
+            "last_modified_by": "Neil Mitchell",
+            "status": "disabled",
+            "transcript_persisted": False,
+            "cacheable": False,
+        }
+        atomic_write_json(paths.highlights / "intelligence-status.json", disabled_status)
+        atomic_write_json(
+            paths.highlights / "analysis-manifest.json",
+            {
+                "signature": {"recording": probe.source, "highlights_enabled": False},
+                "cacheable": False,
+            },
+        )
+        write_highlight_candidates(
+            [],
+            json_destination=paths.highlights / "candidates.json",
+            markdown_destination=paths.reports / "highlight-candidates.md",
+        )
+        if create_review_media:
+            generate_highlight_review_page(
+                [],
+                {},
+                paths.highlights / "review" / "index.html",
+                includes_game=False,
+                includes_discord=False,
+                includes_microphone=False,
+                intelligence_status=disabled_status,
+                source_reference=_highlight_source_reference(
+                    paths.highlights / "candidates.json", probe.source
+                ),
+            )
+        return [], paths
     audio_streams = _highlight_audio_streams(config)
     known_streams = {stream.index for stream in probe.audio_streams}
     unknown = [stream for stream in audio_streams if stream not in known_streams]
@@ -304,9 +435,116 @@ def analyse_highlights_project(
         raise ValueError(f"Highlight audio references missing streams: {unknown}")
     candidates_path = paths.highlights / "candidates.json"
     manifest_path = paths.highlights / "analysis-manifest.json"
+    speech_status_path = paths.highlights / "speech-trigger-status.json"
+    speech_manifest_path = paths.highlights / "speech-trigger-manifest.json"
+    speech_report_path = paths.reports / "speech-trigger-status.md"
+    speech_result: SpeechTriggerResult | None = None
+    intelligence_status_path = paths.highlights / "intelligence-status.json"
+    intelligence_status: dict[str, object] | None = None
+    intelligence_settings = config.highlights.intelligence
+    if intelligence_status_path.is_file():
+        try:
+            payload = json.loads(intelligence_status_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                intelligence_status = payload
+        except (OSError, ValueError):
+            pass
     if config.highlights.manual_selection is not None:
         candidates = load_highlight_selection(config.highlights.manual_selection)
+        # A reviewed override must never be reused as an automatic, unapproved
+        # proposal batch if the operator later clears manual_selection.
+        atomic_write_json(
+            manifest_path,
+            {
+                "signature": {
+                    "recording": probe.source,
+                    "manual_selection": quick_file_fingerprint(config.highlights.manual_selection),
+                },
+                "cacheable": False,
+                "author": "Neil Mitchell",
+                "last_modified_by": "Neil Mitchell",
+            },
+        )
+        if intelligence_settings.feedback_path is not None:
+            record_editorial_feedback(
+                config.highlights.manual_selection, intelligence_settings.feedback_path
+            )
+        if speech_status_path.is_file():
+            try:
+                cached_status = json.loads(speech_status_path.read_text(encoding="utf-8"))
+                if isinstance(cached_status, dict):
+                    speech_result = speech_trigger_result_from_dict(cached_status)
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                speech_result = None
     else:
+        speech_settings = config.highlights.speech_triggers
+        source_streams = {
+            "discord": config.audio.discord_track,
+            "microphone": config.audio.microphone_track,
+        }
+        speech_signature = {
+            "schema_version": _SPEECH_TRIGGER_SCHEMA_VERSION,
+            "recording": probe.source,
+            "source_streams": source_streams,
+            "settings": speech_settings.model_dump(mode="json"),
+            "runtime": speech_runtime_signature(speech_settings),
+        }
+        if speech_status_path.is_file() and speech_manifest_path.is_file():
+            try:
+                cached_manifest = json.loads(speech_manifest_path.read_text(encoding="utf-8"))
+                cached_payload = json.loads(speech_status_path.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached_manifest, dict)
+                    and cached_manifest.get("signature") == speech_signature
+                    and cached_manifest.get("cacheable") is True
+                    and isinstance(cached_payload, dict)
+                ):
+                    cached_result = speech_trigger_result_from_dict(cached_payload)
+                    if cached_result.cacheable:
+                        speech_result = cached_result
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                speech_result = None
+        if speech_result is None:
+            speech_result = detect_spoken_commands(
+                config.input.recording,
+                source_streams=source_streams,  # type: ignore[arg-type]
+                settings=speech_settings,
+            )
+            atomic_write_json(speech_status_path, speech_result.to_dict())
+            atomic_write_json(
+                speech_manifest_path,
+                {
+                    "signature": speech_signature,
+                    "cacheable": speech_result.cacheable,
+                },
+            )
+        speech_report = [
+            "# Spoken highlight command status",
+            "",
+            f"- Status: `{speech_result.status}`",
+            f"- Backend: `{speech_result.backend}`",
+            f"- Backend version: `{speech_result.backend_version or 'unavailable'}`",
+            f"- Model: `{speech_result.model_identity or 'unavailable'}`",
+            f"- Completed sources: `{', '.join(speech_result.completed_sources) or 'none'}`",
+            f"- Exact command matches: `{len(speech_result.events)}`",
+            "- Full transcript persisted: `no`",
+        ]
+        if speech_result.diagnostics:
+            speech_report.extend(
+                ["", "## Diagnostics", "", *(f"- {item}" for item in speech_result.diagnostics)]
+            )
+        atomic_write_text(speech_report_path, "\n".join(speech_report) + "\n")
+        spoken_command_signals = [
+            Signal(
+                seconds=event.end_seconds,
+                kind="speech_clip_command",
+                strength=event.confidence,
+                detail=(
+                    f"speech_clip_command:{event.source_role}:{event.phrase}:{event.confidence:.2f}"
+                ),
+            )
+            for event in speech_result.events
+        ]
         signature = {
             "schema_version": _HIGHLIGHT_SCHEMA_VERSION,
             "recording": probe.source,
@@ -318,11 +556,33 @@ def analyse_highlights_project(
             "pulls": [pull.model_dump(mode="json") for pull in pulls],
             "highlights": config.highlights.model_dump(mode="json"),
             "audio_streams": audio_streams,
+            "source_streams": source_streams,
+            "recording_started_at": (
+                config.detection.recording_started_at.isoformat()
+                if config.detection.recording_started_at is not None
+                else None
+            ),
+            "recording_offset_seconds": config.detection.combat_log_offset_seconds,
+            "speech_triggers": speech_result.to_dict(),
+            "intelligence_runtime": intelligence_runtime_signature(intelligence_settings),
+            "editorial_feedback": load_editorial_feedback(intelligence_settings.feedback_path),
         }
         cached = False
         if candidates_path.is_file() and manifest_path.is_file():
             try:
-                if json.loads(manifest_path.read_text(encoding="utf-8")) == signature:
+                cached_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached_manifest, dict)
+                    and cached_manifest.get("signature") == signature
+                    and cached_manifest.get("cacheable") is True
+                    and (
+                        not intelligence_settings.enabled
+                        or (
+                            intelligence_status is not None
+                            and intelligence_status.get("status") == "complete"
+                        )
+                    )
+                ):
                     candidates = _HIGHLIGHT_LIST.validate_json(
                         candidates_path.read_text(encoding="utf-8")
                     )
@@ -341,23 +601,135 @@ def analyse_highlights_project(
                 recording_duration_seconds=probe.duration_seconds,
                 recording_offset_seconds=config.detection.combat_log_offset_seconds,
                 settings=config.highlights,
+                spoken_command_signals=spoken_command_signals,
+                limit_candidates=not intelligence_settings.enabled,
             )
+            intelligence_cacheable = True
+            if intelligence_settings.enabled:
+                pool = candidates
+                baseline = select_highlight_candidates(pool, settings=config.highlights)
+                for name, rows in (
+                    ("discovery-pool.json", pool),
+                    ("repaired-baseline.json", baseline),
+                ):
+                    atomic_write_json(
+                        paths.highlights / name,
+                        {
+                            "schema_version": 1,
+                            "author": "Neil Mitchell",
+                            "last_modified_by": "Neil Mitchell",
+                            "source": probe.source,
+                            "highlights": [row.model_dump(mode="json") for row in rows],
+                        },
+                    )
+                result = analyse_intelligent_highlights(
+                    config.input.recording,
+                    source_streams=source_streams,
+                    recording_duration_seconds=probe.duration_seconds,
+                    pulls=pulls,
+                    heuristic_candidates=pool,
+                    settings=intelligence_settings,
+                    feedback=load_editorial_feedback(intelligence_settings.feedback_path),
+                )
+                intelligence_status = result.to_dict()
+                intelligence_cacheable = result.cacheable
+                atomic_write_json(intelligence_status_path, intelligence_status)
+                if intelligence_settings.required and result.status != "complete":
+                    atomic_write_json(
+                        manifest_path,
+                        {
+                            "signature": signature,
+                            "cacheable": False,
+                            "author": "Neil Mitchell",
+                            "last_modified_by": "Neil Mitchell",
+                        },
+                    )
+                    raise RuntimeError(
+                        f"Required highlight intelligence did not complete ({result.status}); "
+                        f"see {intelligence_status_path} for coverage and diagnostics"
+                    )
+                command_candidates = [
+                    row
+                    for row in pool
+                    if row.origin == "speech"
+                    or any(signal.startswith("speech_clip_command:") for signal in row.signals)
+                ]
+                if intelligence_status.get("status") == "complete":
+                    proposals = [*result.candidates, *command_candidates]
+                else:
+                    proposals = [*result.candidates, *baseline]
+                candidates = select_highlight_candidates(
+                    proposals,
+                    settings=config.highlights.model_copy(
+                        update={"maximum_candidates": intelligence_settings.maximum_candidates}
+                    ),
+                )
+            else:
+                intelligence_status = {
+                    "schema_version": 1,
+                    "author": "Neil Mitchell",
+                    "last_modified_by": "Neil Mitchell",
+                    "status": "disabled",
+                    "transcript_persisted": False,
+                    "cacheable": True,
+                }
+                atomic_write_json(intelligence_status_path, intelligence_status)
             atomic_write_json(
                 candidates_path,
                 [candidate.model_dump(mode="json") for candidate in candidates],
             )
-            atomic_write_json(manifest_path, signature)
+            atomic_write_json(
+                manifest_path,
+                {
+                    "signature": signature,
+                    "cacheable": speech_result.cacheable and intelligence_cacheable,
+                },
+            )
     write_highlight_candidates(
         candidates,
         json_destination=candidates_path,
         markdown_destination=paths.reports / "highlight-candidates.md",
     )
+    if intelligence_status is not None:
+        status = str(intelligence_status.get("status", "unknown"))
+        report = [
+            "# Highlight intelligence status",
+            "",
+            "Author: Neil Mitchell",
+            "",
+            f"- Coverage: `{status}`",
+            f"- Local model: `{intelligence_settings.model}`",
+            f"- Review candidates: {len(candidates)}",
+            "- Transcript and decoded voice audio persisted: no",
+            "- Recommendations are unapproved; scores do not establish editorial quality.",
+            "- A degraded pass uses corrected heuristic suggestions and is not a complete AI scan.",
+            "",
+            "See highlights/intelligence-status.json for source coverage and model provenance.",
+        ]
+        atomic_write_text(paths.reports / "highlight-intelligence.md", "\n".join(report) + "\n")
     if create_review_media:
+        portrait = _portrait_source(config, paths)
+        presentation_reference = _presentation_reference(config, portrait)
+        # Preserve editorial ratings, but do not carry a selected export across
+        # a change of picture, timing or audio. The source files remain untouched.
+        if (
+            config.highlights.manual_selection is not None
+            and _selection_presentation_reference(config.highlights.manual_selection)
+            != presentation_reference
+        ):
+            candidates = [row.model_copy(update={"include": False}) for row in candidates]
+            write_highlight_candidates(
+                candidates,
+                json_destination=candidates_path,
+                markdown_destination=paths.reports / "highlight-candidates.md",
+            )
         assets = generate_highlight_review_media(
             config.input.recording,
             candidates,
             paths.highlights / "review",
             audio_stream_indexes=audio_streams,
+            media_format=config.preview.review_media_format,
+            **({"portrait_source": portrait} if portrait is not None else {}),
         )
         generate_highlight_review_page(
             candidates,
@@ -373,8 +745,69 @@ def analyse_highlights_project(
                 config.highlights.keep_microphone_audio
                 and config.audio.microphone_track is not None
             ),
+            speech_status=(speech_result.to_dict() if speech_result is not None else None),
+            intelligence_status=intelligence_status,
+            source_reference=_review_source_reference(
+                candidates_path,
+                probe.source,
+                presentation_reference,
+            ),
+            presentation_reference=presentation_reference,
+            native_portrait=portrait is not None,
         )
     return candidates, paths
+
+
+def prepare_highlight_comparison(config: ProjectConfig) -> Path:
+    """Blindly compare saved proposals from the same source without approving exports."""
+    probe, _, paths = analyse_project(config, create_review_media=False)
+    baseline_path = paths.highlights / "repaired-baseline.json"
+    candidate_path = paths.highlights / "candidates.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    manifest = json.loads((paths.highlights / "analysis-manifest.json").read_text(encoding="utf-8"))
+    signature = manifest.get("signature") if isinstance(manifest, dict) else None
+    if (
+        not isinstance(baseline, dict)
+        or baseline.get("source") != probe.source
+        or not isinstance(signature, dict)
+        or signature.get("recording") != probe.source
+    ):
+        raise ValueError("Comparison proposals must match the current recording fingerprint")
+    variants = {
+        "repaired_heuristics": _HIGHLIGHT_LIST.validate_python(baseline.get("highlights")),
+        "current_recommendations": load_highlight_selection(candidate_path),
+    }
+    root = paths.highlights / "comparison"
+    portrait = _portrait_source(config, paths)
+    presentation_reference = _presentation_reference(config, portrait)
+    prepared = {}
+    for name, rows in variants.items():
+        unapproved = [row.model_copy(update={"include": False}) for row in rows]
+        asset_directory = hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+        assets = generate_highlight_review_media(
+            config.input.recording,
+            unapproved,
+            root / "variants" / asset_directory,
+            audio_stream_indexes=_highlight_audio_streams(config),
+            media_format=config.preview.review_media_format,
+            **({"portrait_source": portrait} if portrait is not None else {}),
+        )
+        prepared[name] = (unapproved, assets)
+    comparison = generate_highlight_comparison_page(
+        prepared,
+        root / "index.html",
+        source_reference=_review_source_reference(
+            candidate_path,
+            probe.source,
+            presentation_reference,
+        ),
+        includes_game=config.highlights.keep_game_audio,
+        includes_discord=config.highlights.keep_discord_audio,
+        includes_microphone=config.highlights.keep_microphone_audio,
+        presentation_reference=presentation_reference,
+    )
+    atomic_write_json(root / "comparison-manifest.json", comparison)
+    return root / "index.html"
 
 
 def render_highlights_project(
@@ -383,6 +816,17 @@ def render_highlights_project(
     approved: bool,
     dry_run: bool = False,
 ) -> tuple[list[Path], ProjectPaths]:
+    source_paths = ProjectPaths.for_config(config).create()
+    portrait = _portrait_source(config, source_paths)
+    current_reference = _presentation_reference(config, portrait)
+    selected_reference = _selection_presentation_reference(config.highlights.manual_selection)
+    if (portrait is not None and selected_reference != current_reference) or (
+        portrait is None and selected_reference is not None
+    ):
+        raise ValueError(
+            "Highlight selection does not match the current picture, timing and audio. "
+            "Regenerate the highlight review and download a new selection before export."
+        )
     candidates, paths = analyse_highlights_project(config, create_review_media=False)
     outputs = render_vertical_highlights(
         config.input.recording,
@@ -393,6 +837,7 @@ def render_highlights_project(
         settings=config.highlights,
         approved=approved,
         dry_run=dry_run,
+        **({"portrait_source": portrait} if portrait is not None else {}),
     )
     return outputs, paths
 
@@ -404,7 +849,14 @@ def _load_saved_pulls(config: ProjectConfig, paths: ProjectPaths) -> list[PullCa
 
 def build_timeline_project(
     config: ProjectConfig,
-) -> tuple[MediaProbe, list[PullCandidate], TimelineDocument, Path, ProjectPaths]:
+    *,
+    resolve_exports: bool = True,
+) -> tuple[MediaProbe, list[PullCandidate], TimelineDocument, Path | None, ProjectPaths]:
+    """Build a timeline, optionally materializing the full-size Resolve-safe source.
+
+    FFmpeg reads the original recording with explicit audio-stream selection; it
+    does not need the separate remux used by Resolve/FCPXML imports.
+    """
     paths = ProjectPaths.for_config(config).create()
     probe = probe_media(config.input.recording, paths.analysis / "media-probe.json")
     issues = validate_audio_mapping(config.audio, probe)
@@ -432,6 +884,8 @@ def build_timeline_project(
     write_timeline_json(timeline, paths.timeline / "timeline.json")
     write_labels_srt(timeline, paths.timeline / "pull-labels.srt")
     write_chapters(timeline, paths.reports / "chapters.txt")
+    if not resolve_exports:
+        return probe, pulls, timeline, None, paths
     sidecar = create_mic_free_remux(
         config.input.recording,
         config.audio.retained_stream_indexes(),
@@ -490,7 +944,7 @@ def render_preview_project(
     *,
     dry_run: bool = False,
 ) -> tuple[Path, ProjectPaths]:
-    probe, pulls, timeline, _, paths = build_timeline_project(config)
+    probe, pulls, timeline, _, paths = build_timeline_project(config, resolve_exports=False)
     music = selected_music(config)
     presentation = _resolved_presentation(config, pulls)
     pull_csv = paths.analysis / "pull-candidates.csv"
@@ -600,7 +1054,7 @@ def render_final_project(
     review_validation, _ = validate_project_artifacts(config)
     if review_validation["status"] != "passed":
         raise FinalRenderError("The review validation must pass before final rendering")
-    probe, pulls, timeline, _, paths = build_timeline_project(config)
+    probe, pulls, timeline, _, paths = build_timeline_project(config, resolve_exports=False)
     resolution, fps, width, height, destination = _final_output_settings(config, probe, paths)
     music = selected_music(config)
     presentation = _resolved_presentation(config, pulls)
@@ -678,6 +1132,10 @@ def render_final_project(
     final_validation: dict[str, object] = {
         "status": "passed" if all(bool(check["passed"]) for check in checks) else "failed",
         "checks": checks,
+        "artifact": {
+            "path": str(destination.resolve()),
+            "sha256": full_file_sha256(destination),
+        },
     }
     write_validation_report(
         final_validation,
@@ -704,7 +1162,7 @@ def upload_youtube_project(
         )
     if not dry_run and config.youtube.privacy_status == "public" and not public_approved:
         raise YouTubeUploadError("Public publishing requires the additional --public-approved flag")
-    probe, pulls, timeline, _, paths = build_timeline_project(config)
+    probe, pulls, timeline, _, paths = build_timeline_project(config, resolve_exports=False)
     _, _, _, _, final = _final_output_settings(config, probe, paths)
     validation_path = paths.reports / "final-validation.json"
     if not validation_path.is_file():
@@ -713,8 +1171,40 @@ def upload_youtube_project(
         validation = json.loads(validation_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise YouTubeUploadError("The final validation report is unreadable") from exc
-    if validation.get("status") != "passed":
+    if not isinstance(validation, dict) or validation.get("status") != "passed":
         raise YouTubeUploadError("The final master must pass validation before upload")
+    recovery = (
+        "Re-render the reviewed final with render-final --approved to generate fresh, "
+        "file-bound validation. If an old master blocks rendering, preserve it at a separate "
+        "path first; preview validation alone cannot approve that file."
+    )
+    artifact = validation.get("artifact")
+    if not isinstance(artifact, dict):
+        raise YouTubeUploadError("Final validation has no artifact binding. " + recovery)
+    validated_path = artifact.get("path")
+    validated_sha256 = artifact.get("sha256")
+    if (
+        not isinstance(validated_path, str)
+        or not validated_path
+        or not isinstance(validated_sha256, str)
+        or len(validated_sha256) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in validated_sha256)
+    ):
+        raise YouTubeUploadError("Final validation has an invalid artifact binding. " + recovery)
+    try:
+        bound_path = Path(validated_path)
+        matches_path = bound_path.is_absolute() and bound_path.resolve() == final.resolve()
+        if not matches_path:
+            raise YouTubeUploadError(
+                "Final validation belongs to a different final path. " + recovery
+            )
+        actual_sha256 = full_file_sha256(final)
+    except (OSError, ValueError) as exc:
+        raise YouTubeUploadError(
+            "The selected final master could not be verified. " + recovery
+        ) from exc
+    if actual_sha256 != validated_sha256.lower():
+        raise YouTubeUploadError("The final master changed after validation. " + recovery)
     package = write_youtube_package(
         config,
         timeline,
@@ -748,15 +1238,15 @@ def upload_youtube_project(
 
 
 def validate_project_artifacts(config: ProjectConfig) -> tuple[dict[str, object], ProjectPaths]:
-    probe, pulls, timeline, sidecar, paths = build_timeline_project(config)
+    probe, pulls, timeline, _, paths = build_timeline_project(config, resolve_exports=False)
     preview = paths.preview / f"{paths.root.name}-review-720p.mp4"
-    microphone_free_probe = probe_media(sidecar) if sidecar.is_file() else None
     preview_probe = probe_media(preview) if preview.is_file() else None
     result = validate_artifacts(
         probe=probe,
         pulls=pulls,
         timeline=timeline,
-        microphone_free_probe=microphone_free_probe,
+        microphone_free_probe=None,
+        expected_audio_stream_indexes=config.audio.retained_stream_indexes(),
         preview_probe=preview_probe,
         preview_exists=preview.is_file(),
     )

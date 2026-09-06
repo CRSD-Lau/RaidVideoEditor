@@ -1,3 +1,8 @@
+---
+author: Neil Mitchell
+last_modified_by: Neil Mitchell
+---
+
 # Combat-log and Skada setup
 
 The MVP uses deterministic local evidence. It prefers explicit WoW combat
@@ -7,9 +12,9 @@ lack modern boundary events.
 
 Every result still needs a human review.
 
-## Current legacy log
+## Accumulated legacy logs
 
-The audited workstation has this accumulated log:
+One workstation's July 26, 2026 audit used this accumulated log path:
 
 ```text
 D:\world of warcraft 3.3.5a hd\Logs\WoWCombatLog.txt
@@ -23,7 +28,7 @@ Scanning still reads through the accumulated file, so it can take time. Do not
 truncate, rotate, or edit the log while analysis is running. Prefer stopping
 combat logging or closing WoW before analysis.
 
-### Audited current-recording result
+### Historical recording result
 
 The read-only analysis of the 2026-07-24 recording produced 31 provisional
 candidates:
@@ -33,9 +38,9 @@ candidates:
 - one short possible duplicate `The Lich King` segment at confidence `0.45`,
   excluded by default.
 
-This proves the fallback can extract deterministic candidates from the available
-legacy evidence. It does not approve their classifications or boundaries. The
-29 activity clusters remain `unknown` and require manual review.
+This documents a successful extraction from that historical evidence. It does
+not approve classifications or boundaries, nor predict the queue for another
+recording. Those 29 activity clusters were `unknown` and required manual review.
 
 ## Enable and preserve combat logging
 
@@ -84,8 +89,8 @@ If `recording_started_at` is `null`, the detector:
 2. Otherwise estimates the start as file modification time minus media
    duration.
 
-The OBS profile currently uses the matching timestamped filename pattern, but
-an explicit timestamp is still easier to audit. WoW log rows can omit the year;
+Use a matching timestamped OBS filename pattern or an explicit start time that
+can be audited. WoW log rows can omit the year;
 the parser resolves them relative to the recording start and handles New Year
 rollover.
 
@@ -183,8 +188,8 @@ not edit an actively written file.
 ## Analyze and inspect evidence
 
 ```powershell
-uv run raid-editor analyse config\my-raid.local.yaml
-uv run raid-editor review config\my-raid.local.yaml
+uv run --no-sync raid-editor analyse config\my-raid.local.yaml
+uv run --no-sync raid-editor review config\my-raid.local.yaml
 ```
 
 Review:
@@ -260,6 +265,8 @@ Do not build a timeline merely because candidate generation completed. Confirm:
 Only then run:
 
 ```powershell
-uv run raid-editor build-timeline config\my-raid.local.yaml
-uv run raid-editor render-preview config\my-raid.local.yaml
+uv run --no-sync raid-editor render-preview config\my-raid.local.yaml
 ```
+
+The preview command builds its own timeline. Use `build-timeline` separately
+only when you need the full-size microphone-free source copy for Resolve.
