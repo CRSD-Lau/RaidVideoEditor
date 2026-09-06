@@ -196,6 +196,11 @@ Private; weekly templates can configure Public, which still requires separate
 public-upload approval and verified API eligibility. Follow the
 [YouTube guide](docs/youtube-upload.md) before transmitting media.
 
+Older approved final MP4s can be checked with `validate-final CONFIG --video PATH`
+and accepted using the exact SHA-256 printed by inspection. This preserves the
+video and uses saved edit records even when the raw recording has been cleaned
+up. See [existing-final recovery](docs/youtube-upload.md#reuse-an-existing-final-without-rendering-it-again).
+
 ## Publishing, evidence, and retention
 
 `prepare-social` validates approved portrait masters and builds four-platform

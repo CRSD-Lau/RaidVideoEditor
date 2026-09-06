@@ -13,6 +13,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Existing-final inspection and explicit SHA-bound acceptance without rerendering
+  or modifying the MP4, with exact receipt backups and saved edit context for
+  YouTube packaging after raw-source cleanup. Recorded presentation timing is
+  retained; existing conflicting bindings and changed evidence are rejected.
+
 - Repository publishing safeguards, pinned CI, and automated secret
   scanning.
 - Repository social preview and consolidated documentation index.

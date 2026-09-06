@@ -53,6 +53,7 @@ from raid_editor.growth.models import (
 )
 from raid_editor.ingestion.probe import probe_media
 from raid_editor.models import PullCandidate, TimelineDocument
+from raid_editor.rendering.validation import ORIGIN, FinalValidationError, accepted_final_context
 from raid_editor.social.ledger import load_distribution_manifest
 from raid_editor.util.paths import (
     atomic_write_json,
@@ -353,6 +354,12 @@ def _validated_final(root: Path) -> tuple[Path, str] | None:
         return None
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         return None
+    if validation.get("validation_origin") == ORIGIN:
+        try:
+            context = accepted_final_context(root, validation)
+            return context.video, validation["artifact"]["sha256"]
+        except (OSError, ValueError, FinalValidationError):
+            return None
     artifact = validation.get("artifact")
     if "artifact" not in validation:
         # Historical validation reports contained checks only. A completed

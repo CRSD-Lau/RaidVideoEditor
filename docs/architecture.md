@@ -104,6 +104,7 @@ The implemented commands are:
 | `create-resolve-project CONFIG` | Invoke the isolated Python 3.13 Resolve helper; supports `--dry-run`. |
 | `render-preview CONFIG` | Build dependencies and render the configured review MP4; supports `--dry-run`. |
 | `render-final CONFIG --approved` | Render and validate the accepted high-quality local master; never uploads it. |
+| `validate-final CONFIG --video PATH` | Inspect an existing final without rendering; acceptance requires `--approved --expected-sha256` and preserved edit evidence. |
 | `upload-youtube CONFIG --dry-run` | Generate reviewable upload metadata, chapters, and thumbnail with no authentication or transmission. |
 | `upload-youtube CONFIG --approved` | Full-hash and resumably upload the validated master, Private by default. Public also requires `--public-approved`. |
 | `validate CONFIG` | Rebuild required artifacts and run the bounded validation checks. |
