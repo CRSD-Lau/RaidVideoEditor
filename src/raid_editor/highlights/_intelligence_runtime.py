@@ -336,7 +336,15 @@ class LocalWhisper:
                     self.diagnostics.append("optional_gpu_dll_registration_failed")
         # Some CTranslate2 Windows builds call LoadLibrary without the directory
         # search flags. Loading these exact wheel-owned paths handles that case.
-        for name in ("cudart64_12.dll", "cublasLt64_12.dll", "cublas64_12.dll", "cudnn64_9.dll"):
+        for name in (
+            "cudart64_12.dll",
+            "cublasLt64_12.dll",
+            "cublas64_12.dll",
+            # cuDNN 9.26 delegates its API to this library using LoadLibrary.
+            # Preload the exact wheel path before the cuDNN dispatcher.
+            "cudnn_graph64_9.dll",
+            "cudnn64_9.dll",
+        ):
             for directory in directories:
                 library = directory / name
                 if library.is_file():
