@@ -47,6 +47,9 @@ dev = [
   "types-PyYAML>=6.0.12,<7",
 ]
 intelligence = [
+    # faster-whisper 1.2.1 passes PyAV's removed metadata_errors argument.
+    # Keep the decoder on the compatible PyAV 18 line until faster-whisper supports PyAV 19.
+    "av>=18,<19",
     "faster-whisper>=1.2.1,<2",
 ]
 intelligence-gpu = [
